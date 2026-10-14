@@ -1,0 +1,284 @@
+/* ============================================================
+   DEEP DIVE — interactive landing screen (ProofLens)
+   The supplied artwork is the complete visual design; everything
+   here animates AROUND it. The invisible .hotspot is aligned with
+   the "PRESS ENTER TO INITIALIZE" control baked into the image —
+   coordinates were measured from the artwork (2752×1536):
+     control strip: x 1040–1686, y 1294–1356
+     hit area (padded): x 1020–1700, y 1281–1369
+     -> left 37.06%  top 83.40%  width 24.71%  height 5.73%
+   ============================================================ */
+
+:root {
+  --bg-deep: #030c22;
+  --bg-glow: #062050;
+  --ink: #061b6a;          /* artwork ink navy */
+  --focus: #7db4ff;
+  --text-soft: #cfe3ff;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  overflow: hidden;              /* never a horizontal scrollbar */
+  background: var(--bg-deep);
+  color: var(--text-soft);
+  font-family: "Courier New", ui-monospace, Consolas, monospace;
+}
+
+/* ---------- Stage: CRT chassis with 0.5cm bezel framing ---------- */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding:
+    calc(env(safe-area-inset-top, 0px) + clamp(14px, 0.5cm, 20px))
+    calc(env(safe-area-inset-right, 0px) + clamp(14px, 0.5cm, 20px))
+    calc(env(safe-area-inset-bottom, 0px) + clamp(14px, 0.5cm, 20px))
+    calc(env(safe-area-inset-left, 0px) + clamp(14px, 0.5cm, 20px));
+  background: radial-gradient(130% 130% at 50% 50%, #060b18 0%, #02050e 100%);
+  box-sizing: border-box;
+}
+
+/* CRT Screen: rounded glass aperture framed by the 0.5cm chassis bezel */
+.crt-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #041026;
+  box-shadow:
+    0 0 0 1px rgba(90, 150, 255, 0.22),
+    0 0 0 2px #01040a,
+    0 0 24px rgba(0, 0, 0, 0.85);
+}
+
+/* The hero artwork inside the CRT screen */
+.artwork {
+  position: absolute;
+  aspect-ratio: 2752 / 1536;
+  width: 100%;
+  max-width: none;
+  animation: dd-entrance 700ms ease-out both;
+  will-change: opacity, transform;
+  container-type: inline-size;
+}
+
+.artwork__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  animation: dd-ambient 9s ease-in-out infinite alternate;
+}
+
+/* Applied only when the image is displayed at/above its native size.
+   When downscaled (typical laptop/phone), the default smooth filter keeps
+   the small text readable — nearest-neighbour would break thin strokes. */
+.artwork__img.is-pixelated {
+  image-rendering: pixelated;
+}
+
+/* ---------- Entrance: fade from black + whisper of scale ---------- */
+
+@keyframes dd-entrance {
+  from { opacity: 0; transform: scale(1.02); }
+  60%  { opacity: 1; }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes dd-ambient {
+  from { filter: brightness(1); }
+  to   { filter: brightness(1.02); }
+}
+
+/* ---------- Atmosphere: scanlines + CRT glass (non-interactive) ---------- */
+
+.fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;          /* decorations never intercept input */
+}
+
+/* CRT tube glass reflection & vignette overlay */
+.fx--crt-glass {
+  z-index: 25;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 26px 4px rgba(1, 6, 20, 0.65),
+    inset 0 1px 2px rgba(255, 255, 255, 0.10);
+}
+
+/* Scanlines run at z-index 20 with subtle opacity so they enrich the CRT aesthetic
+   without disrupting text readability. */
+.fx--scanlines {
+  z-index: 20;
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(1, 7, 20, 0.16) 0px,
+    rgba(1, 7, 20, 0.16) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.18;
+  animation: dd-flicker 7s linear infinite;
+}
+
+@keyframes dd-flicker {
+  0%, 100% { opacity: 0.16; }
+  7%  { opacity: 0.22; }
+  11% { opacity: 0.15; }
+  23% { opacity: 0.20; }
+  41% { opacity: 0.17; }
+  63% { opacity: 0.21; }
+  87% { opacity: 0.18; }
+}
+
+/* ---------- Transparent activation control ---------- */
+
+.hotspot {
+  position: absolute;
+  left: 37.06%;
+  top: 83.40%;
+  width: 26.38%;
+  height: 5.73%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;       /* invisible at rest */
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 20;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms ease;
+}
+
+/* Hover / focus: restrained pixel-style glow, no layout shift */
+.hotspot:hover,
+.hotspot:focus-visible {
+  background-color: rgba(150, 200, 255, 0.07);
+  box-shadow:
+    0 0 0 2px rgba(125, 180, 255, 0.28),
+    0 0 22px rgba(90, 150, 255, 0.30);
+}
+
+.hotspot:focus-visible {
+  outline: 3px dashed var(--focus);
+  outline-offset: 4px;
+}
+
+/* Pressed: brief dip, image itself never moves */
+.hotspot:active,
+.hotspot.is-pressed {
+  transform: scale(0.985);
+  background-color: rgba(2, 10, 30, 0.10);
+  box-shadow: none;
+}
+
+.hotspot[disabled] { cursor: default; }
+
+/* ---------- Blinking block cursor after “INITIALIZE” ---------- */
+
+.cursor-blink {
+  position: absolute;
+  left: 61.74%;
+  top: 85.09%;
+  width: 0.91%;
+  height: 2.34%;
+  background: var(--ink);
+  opacity: 0.95;
+  z-index: 15;
+  pointer-events: none;
+  animation: dd-blink 1.15s steps(1, end) infinite;
+}
+
+@keyframes dd-blink {
+  0%, 60%        { opacity: 0.95; }
+  60.01%, 100%   { opacity: 0; }
+}
+
+/* ---------- Initialization transition ---------- */
+
+.fx--sweep {
+  z-index: 40;
+  opacity: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(140, 190, 255, 0.14) 46%,
+    rgba(220, 240, 255, 0.50) 49%,
+    rgba(140, 190, 255, 0.14) 52%,
+    transparent 100%
+  );
+}
+
+body.is-initializing .fx--sweep {
+  opacity: 1;
+  animation: dd-sweep 620ms ease-in forwards;
+}
+
+@keyframes dd-sweep {
+  from { transform: translateY(-110%); }
+  to   { transform: translateY(110%); }
+}
+
+body.is-initializing .artwork {
+  animation: dd-shutdown 620ms ease-in forwards;
+}
+
+@keyframes dd-shutdown {
+  to { opacity: 0.08; filter: brightness(0.5) saturate(0.6); }
+}
+
+body.is-initializing .cursor-blink {
+  animation: none;
+  opacity: 0;
+}
+
+/* ---------- Accessible status line (errors, warnings) ---------- */
+
+.status {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  margin: 0;
+  text-align: center;
+  font-size: clamp(12px, 1.6vw, 14px);
+  letter-spacing: 0.5px;
+  color: #ffd9a0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+/* ---------- Reduced motion: non-animated fallback ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .artwork { animation: none !important; opacity: 1; transform: none; }
+  .artwork__img { animation: none !important; }
+  .fx--scanlines { animation: none !important; opacity: 0.30; }
+  .fx--sweep { display: none; }
+  .cursor-blink { animation: none !important; opacity: 0.9; }
+  .hotspot { transition: none; }
+  body.is-initializing .artwork { animation: dd-fadeout 260ms ease forwards !important; }
+}
+
+@keyframes dd-fadeout {
+  to { opacity: 0.15; }
+}

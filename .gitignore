@@ -1,0 +1,22 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Environment secrets --------------------------------------------------
+.env
+
+# --- Runtime data (keep the folder itself) --------------------------------
+data/*
+!data/.gitkeep
+
+# --- OS / editor noise ----------------------------------------------------
+Thumbs.db
+.DS_Store
+*.bak
+*.bak.*

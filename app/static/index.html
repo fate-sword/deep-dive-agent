@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>DEEP DIVE — Initialize</title>
+  <meta name="description" content="DEEP DIVE — go beyond the surface. Boot the ProofLens research terminal.">
+  <meta name="theme-color" content="#020612">
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="assets/deep-dive-landing.png?v=9" as="image" fetchpriority="high">
+  <link rel="stylesheet" href="css/landing.css?v=7">
+</head>
+<body>
+  <main class="stage" id="stage">
+    <div class="crt-screen" id="crt-screen">
+      <div class="artwork" id="artwork">
+        <img class="artwork__img"
+             src="assets/deep-dive-landing.png?v=9"
+             alt="DEEP DIVE — go beyond the surface. Pixel-art title screen: a research terminal that boots with a PRESS ENTER TO INITIALIZE prompt."
+             width="2752" height="1536"
+             fetchpriority="high" decoding="async">
+        
+        <!-- Invisible activation control aligned with the button drawn in the
+             artwork (see README: “Button alignment”). -->
+        <button class="hotspot" id="init-button" type="button" aria-label="Initialize Deep Dive"></button>
+        <span class="cursor-blink" aria-hidden="true"></span>
+      </div>
+      <div class="fx fx--scanlines" aria-hidden="true"></div>
+      <div class="fx fx--sweep" aria-hidden="true"></div>
+      <div class="fx fx--crt-glass" aria-hidden="true"></div>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="js/landing.js?v=7" defer></script>
+</body>
+</html>
