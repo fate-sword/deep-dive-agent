@@ -288,3 +288,10 @@ def report(run_id: str, fmt: str):
     if fmt == "md":
         return Response(to_markdown(rep), media_type="text/markdown", headers={"Content-Disposition": f"attachment; filename=deeptrace-{run_id}.md"})
     raise HTTPException(404, "Unknown format")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", "7860"))
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+
