@@ -116,7 +116,8 @@ class LLM:
             if self.provider.name == "openrouter":
                 rem_fallbacks = [m for m in candidates if m != current_model]
                 if rem_fallbacks:
-                    extra_body["models"] = [current_model] + rem_fallbacks
+                    # OpenRouter allows at most 3 models in the 'models' array
+                    extra_body["models"] = ([current_model] + rem_fallbacks)[:3]
 
             for attempt in range(2):
                 try:
