@@ -127,13 +127,8 @@ class LLM:
 
         for current_model in candidates:
             extra_body: dict[str, Any] = dict(extra_body_base)
-            if self.provider.name == "openrouter":
-                # Only pass non-exhausted fallbacks to OpenRouter, max 2 fallbacks (1 current + 2 fallbacks = 3 models max)
-                valid_fallbacks = [m for m in candidates if m != current_model and m not in _DAILY_EXHAUSTED_MODELS][:2]
-                if valid_fallbacks:
-                    extra_body["models"] = [current_model] + valid_fallbacks
-                else:
-                    extra_body.pop("models", None)
+            # Candidate failover is handled cleanly in Python across the candidate chain
+            extra_body.pop("models", None)
 
             # Up to 4 attempts for transient upstream pool rate limits (e.g. Phala on XingChen)
             max_attempts = 4 if "xingchen" in current_model.lower() else 2
