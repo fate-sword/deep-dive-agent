@@ -79,7 +79,7 @@ To allow testing with free-tier models without spending Mesh credits during deve
 - **Registry**: Exactly two providers exist in the codebase: `mesh` and `openrouter`.
 - **Activation Guardrail**: OpenRouter activates **only** if `LLM_PROVIDER=openrouter` AND `ALLOW_DEV_PROVIDER=1`. Otherwise, the server refuses startup with an explicit guardrail error.
 - **Production Refusal**: In containerized production deployments (`DEPLOY_ENV=production` in the Dockerfile), any non-Mesh provider is strictly refused.
-- **Auditable Dev Flags**: Any run executed under a dev provider surfaces a visible `DEV PROVIDER` badge in the UI and outputs a prominent warning banner (`DEV RUN, not valid for submission`) in evaluation exports.
+- **Auditable Dev Flags**: Any run executed under a dev provider surfaces the provider name in the UI switcher and metrics, and outputs a prominent warning banner (`DEV RUN, not valid for submission`) in evaluation exports.
 
 ### Model Allocation & Verification Diversity
 - **Primary Model (`MESH_MODEL`)**: Typically `openai/gpt-4o-mini` for planning, query refinement, claim drafting, and report synthesis.

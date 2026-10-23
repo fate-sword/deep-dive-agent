@@ -101,11 +101,16 @@ def index():
 
 @app.get("/api/status")
 def status():
+    mesh_key = bool(os.getenv("MESH_API_KEY"))
+    or_key = bool(os.getenv("OPENROUTER_API_KEY"))
+    active_prov = settings.llm_provider
+    active_has_key = bool(settings.api_key)
     return {
         "name": "Deeptrace",
-        "live": bool(settings.api_key),
-        "provider": settings.llm_provider,
-        "dev_only": settings.llm_provider != "mesh",
+        "live": active_has_key,
+        "provider": active_prov,
+        "mesh": mesh_key,
+        "openrouter": or_key,
         "model": settings.model,
         "verifier_model": settings.verifier_model,
         "tavily": bool(os.getenv("TAVILY_API_KEY")),
@@ -122,7 +127,8 @@ async def create_run(
 ):
     q = question.strip()[:400]
     client_ip = request.client.host if request.client else "unknown"
-    selected_provider = settings.llm_provider
+    req_prov = (provider or "").strip().lower()
+    selected_provider = req_prov if req_prov in ("mesh", "openrouter") else settings.llm_provider
 
     # Check upload sizes and extensions
     uploads: list[tuple[str, bytes]] = []
@@ -139,7 +145,12 @@ async def create_run(
             raise HTTPException(400, "Uploaded documents exceed 10 MB total limit.")
         uploads.append((f.filename, content))
 
-    has_key = bool(settings.api_key)
+    try:
+        prov_obj = get_provider(selected_provider)
+        has_key = bool(prov_obj.api_key)
+    except Exception:
+        has_key = False
+
     is_sample = bool(sample or not has_key or not q)
     if not is_sample:
         with ip_lock:

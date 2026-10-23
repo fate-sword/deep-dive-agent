@@ -133,29 +133,49 @@ nav {
 }
 .nav-links a:hover { color: var(--ink); }
 .nav-actions { display: flex; align-items: center; gap: 10px; }
-.mode-badge {
-  font: 500 12px var(--font-mono);
-  padding: 4px 10px;
-  border-radius: var(--r-pill);
+/* LLM Gateway Segmented Switcher in Nav */
+.nav-seg {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  display: flex;
+  border-radius: var(--r-pill);
+  padding: 3px;
+  gap: 2px;
+}
+.nav-seg-btn {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-.mode-badge.live { color: var(--ok); border-color: rgba(31,138,91,0.3); background: var(--ok-bg); }
-.mode-badge.live .dot { background: var(--ok); }
-.mode-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
-.dev-chip {
-  font: 700 11px var(--font-mono);
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
-  padding: 3px 8px;
+  background: transparent;
+  border: 0;
   border-radius: var(--r-pill);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  padding: 4px 11px;
+  font: 500 12px var(--font-sans);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.nav-seg-btn:hover {
+  color: var(--ink);
+}
+.nav-seg-btn[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.nav-seg-btn .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+  display: inline-block;
+  transition: background 0.15s ease;
+}
+.nav-seg-btn .dot.live {
+  background: var(--ok);
 }
 
 /* Buttons */
@@ -982,8 +1002,14 @@ footer {
       <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
     </div>
     <div class="nav-actions">
-      <span class="dev-chip" id="dev-chip" style="display:none" title="Running with dev-only model provider">DEV PROVIDER</span>
-      <div class="mode-badge" id="mode-badge"><span class="dot"></span><span id="mode-text">Checking...</span></div>
+      <div class="nav-seg" role="tablist" aria-label="LLM Gateway Provider Switcher">
+        <button type="button" class="nav-seg-btn" id="prov-mesh-btn" role="tab" aria-selected="false" title="Switch to Mesh API" onclick="setProvider('mesh')">
+          <span class="dot" id="dot-mesh"></span> Mesh API
+        </button>
+        <button type="button" class="nav-seg-btn" id="prov-or-btn" role="tab" aria-selected="true" title="Switch to OpenRouter" onclick="setProvider('openrouter')">
+          <span class="dot" id="dot-or"></span> OpenRouter
+        </button>
+      </div>
       <button type="button" class="btn btn-dark btn-pill" id="nav-new-btn" onclick="resetForm()">New Research</button>
     </div>
   </nav>
@@ -1146,6 +1172,7 @@ const EXAMPLES = [
 
 let state = {
   live: false,
+  provider: 'openrouter',
   running: false,
   runId: null,
   t0: 0,
@@ -1159,35 +1186,47 @@ let state = {
   stepCount: 0
 };
 
+function updateProviderUI() {
+  const isMesh = state.provider === 'mesh';
+  const meshBtn = $('#prov-mesh-btn');
+  const orBtn = $('#prov-or-btn');
+  if (meshBtn && orBtn) {
+    meshBtn.setAttribute('aria-selected', isMesh ? 'true' : 'false');
+    orBtn.setAttribute('aria-selected', isMesh ? 'false' : 'true');
+  }
+
+  const s = state.statusData;
+  if (s) {
+    const meshLive = Boolean(s.mesh);
+    const orLive = Boolean(s.openrouter);
+    const dotMesh = $('#dot-mesh');
+    const dotOr = $('#dot-or');
+    if (dotMesh) dotMesh.className = 'dot' + (meshLive ? ' live' : '');
+    if (dotOr) dotOr.className = 'dot' + (orLive ? ' live' : '');
+    state.live = isMesh ? meshLive : orLive;
+  }
+}
+
+function setProvider(p) {
+  state.provider = p;
+  updateProviderUI();
+}
+
 // Check backend status
 fetch('/api/status')
   .then(r => r.json())
   .then(s => {
     state.statusData = s;
-    state.live = s.live;
-    const badge = $('#mode-badge');
-    const txt = $('#mode-text');
-    const devChip = $('#dev-chip');
-
-    // Show DEV PROVIDER warning chip if not mesh
-    if (s.dev_only || (s.provider && s.provider !== 'mesh')) {
-      devChip.style.display = 'inline-block';
-    } else {
-      devChip.style.display = 'none';
+    if (s.provider && (s.provider === 'mesh' || s.provider === 'openrouter')) {
+      state.provider = s.provider;
     }
-
-    if (s.live) {
-      badge.className = 'mode-badge live';
-      const modelShort = (s.model || '').split('/').pop() || s.model;
-      txt.textContent = `● ${s.provider} / ${modelShort}`;
-      badge.title = `Provider: ${s.provider} | Model: ${s.model}`;
-    } else {
-      badge.className = 'mode-badge';
-      txt.textContent = `○ Sample mode (no ${s.provider || 'mesh'} key)`;
-    }
+    updateProviderUI();
   })
   .catch(() => {
-    $('#mode-text').textContent = '○ Offline';
+    const dotMesh = $('#dot-mesh');
+    const dotOr = $('#dot-or');
+    if (dotMesh) dotMesh.className = 'dot';
+    if (dotOr) dotOr.className = 'dot';
   });
 
 // Input handling
@@ -1401,6 +1440,7 @@ function startRun(query, isSample) {
   const fd = new FormData();
   fd.append('question', query);
   fd.append('sample', isSample ? '1' : '0');
+  fd.append('provider', state.provider || 'openrouter');
   for (const f of state.uploadedFiles) {
     fd.append('files', f);
   }
@@ -1548,7 +1588,8 @@ function renderReport(r) {
 
   // Metric pills
   const groundedPct = Math.round((m.groundedness || 0) * 100);
-  const prov = m.provider || (state.statusData ? state.statusData.provider : 'mesh');
+  const rawProv = m.provider || state.provider || (state.statusData ? state.statusData.provider : 'mesh');
+  const provLabel = rawProv === 'openrouter' ? 'OpenRouter' : 'Mesh API';
   const mod = (m.model || (state.statusData ? state.statusData.model : '')).split('/').pop();
   $('#report-metrics').innerHTML = `
     <span class="metric-pill highlight">✓ ${groundedPct}% Grounded</span>
@@ -1556,7 +1597,7 @@ function renderReport(r) {
     <span class="metric-pill">${m.claims_rejected || 0} Rejected</span>
     <span class="metric-pill">${m.loops || 0} Loop-back${m.loops === 1 ? '' : 's'}</span>
     <span class="metric-pill">${m.sources_cited || 0} Sources Cited</span>
-    <span class="metric-pill" style="font-size:11px; color:var(--muted);">${esc(prov)}${mod ? ' / ' + esc(mod) : ''}</span>
+    <span class="metric-pill" style="font-size:11px; color:var(--muted);">${esc(provLabel)}${mod ? ' / ' + esc(mod) : ''}</span>
   `;
 
   // Body content with citations
@@ -1666,7 +1707,7 @@ function askFollowup() {
   fetch(`/api/runs/${encodeURIComponent(rid)}/followup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: q })
+    body: JSON.stringify({ question: q, provider: state.provider })
   })
     .then(r => r.json())
     .then(data => {
