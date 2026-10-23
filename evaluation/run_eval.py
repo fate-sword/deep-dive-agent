@@ -35,8 +35,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--judge-model", default=None)
+    ap.add_argument("--allow-dev-provider", action="store_true", default=False,
+                    help="Allow evaluation using dev provider (e.g. OpenRouter)")
     args = ap.parse_args()
     settings = get_settings()
+
+    if settings.llm_provider != "mesh" and not args.allow_dev_provider:
+        raise SystemExit(
+            f"Evaluation refused: active provider is '{settings.llm_provider}'. "
+            "Hackathon submission evaluation must run with production 'mesh' provider. "
+            "Pass --allow-dev-provider to run dev evaluations."
+        )
+
+    is_dev_run = settings.llm_provider != "mesh"
     llm = LLM(settings)
     here = os.path.dirname(__file__)
     questions = json.load(open(os.path.join(here, "questions.json")))[: args.limit]
@@ -78,14 +89,37 @@ def main():
     summary = {k: avg(k) for k in ("groundedness", "quote_grounded", "coverage", "topic_recall", "independent_agree", "loops")}
     out_dir = os.path.join(os.path.dirname(here), "results")
     os.makedirs(out_dir, exist_ok=True)
-    json.dump({"model": settings.model, "verifier_model": settings.verifier_model, "judge_model": args.judge_model,
-               "date": time.strftime("%Y-%m-%d"), "summary": summary, "rows": rows},
-              open(os.path.join(out_dir, "eval_results.json"), "w"), indent=2)
+    json_payload = {
+        "provider": settings.llm_provider,
+        "model": settings.model,
+        "verifier_model": settings.verifier_model,
+        "judge_model": args.judge_model,
+        "dev_run": is_dev_run,
+        "date": time.strftime("%Y-%m-%d"),
+        "summary": summary,
+        "rows": rows,
+    }
+    if is_dev_run:
+        json_payload["banner"] = "DEV RUN, not valid for submission"
+
+    json.dump(json_payload, open(os.path.join(out_dir, "eval_results.json"), "w"), indent=2)
+
     cols = ["id", "claims_total", "claims_verified", "claims_unverified", "claims_rejected", "groundedness",
             "quote_grounded", "coverage", "topic_recall", "independent_agree", "loops", "contradictions", "seconds"]
-    lines = [f"# Evaluation results ({time.strftime('%Y-%m-%d')})", "",
-             f"Model: `{settings.model}` · Verifier: `{settings.verifier_model}` · Independent judge: `{args.judge_model}`", "",
-             "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+
+    lines = []
+    if is_dev_run:
+        lines += [
+            "> [!WARNING]",
+            "> **DEV RUN, not valid for submission**",
+            f"> This evaluation was run with development provider `{settings.llm_provider}`. Final hackathon submission results must be produced with the Mesh API.",
+            "",
+        ]
+    lines += [
+        f"# Evaluation results ({time.strftime('%Y-%m-%d')})", "",
+        f"Provider: `{settings.llm_provider}` · Model: `{settings.model}` · Verifier: `{settings.verifier_model}` · Independent judge: `{args.judge_model}`", "",
+        "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols),
+    ]
     for r in rows:
         lines.append("| " + " | ".join(str(r.get(c, "-")) if "error" not in r else (r["id"] if c == "id" else "error") for c in cols) + " |")
     lines += ["", "**Averages:** " + ", ".join(f"{k} = {v}" for k, v in summary.items())]

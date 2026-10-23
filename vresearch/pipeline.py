@@ -35,6 +35,7 @@ class Ctx:
                  search_fn=web_search, fetch_fn=fetch_page, progress: Callable[[str], None] | None = None,
                  on_event: Callable | None = None):
         self.llm, self.store, self.s, self.run_id = llm, store, settings, run_id
+        self.settings = settings
         self.doc_index, self.search_fn, self.fetch_fn = doc_index, search_fn, fetch_fn
         self.progress = progress or (lambda m: None)
         self.on_event = on_event
@@ -261,6 +262,8 @@ def build_graph(ctx: Ctx):
             "evidence_passages": len(state["evidence"]), "uncited_sentences_dropped": len(dropped_all),
             "sources_cited": len(registry.numbers), "llm_calls": getattr(ctx.llm, "calls", 0),
             "seconds": round(time.time() - ctx.started, 1),
+            "provider": getattr(getattr(ctx.llm, "provider", None), "name", ctx.settings.llm_provider),
+            "model": ctx.settings.model,
         }
         report = {
             "run_id": ctx.run_id, "question": state["question"], "summary": summary, "sections": sections,

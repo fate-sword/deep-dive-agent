@@ -59,18 +59,27 @@ flowchart TD
 
 ---
 
-## Mesh API Integration
+## Mesh API Integration (Production Provider)
 
-All LLM calls throughout the system are routed strictly through **Mesh API** (an OpenAI-compatible gateway at `https://api.meshapi.ai/v1`) using the official OpenAI SDK client (`vresearch/llm.py`):
+> **Important Hackathon Requirement**: **Mesh API is the only production provider for Deeptrace.** All official evaluations, recorded benchmark results, and submission demos must come strictly from Mesh API (`https://api.meshapi.ai/v1`).
+
+All production LLM calls throughout the multi-agent system are routed through **Mesh API** via the OpenAI SDK (`vresearch/llm.py`):
 
 ```python
-# vresearch/llm.py
+# vresearch/llm.py pointed at Mesh API Gateway
 client = OpenAI(
     base_url=os.getenv("MESH_BASE_URL", "https://api.meshapi.ai/v1"),
     api_key=os.getenv("MESH_API_KEY"),
     timeout=90
 )
 ```
+
+### Dev-Only Provider: OpenRouter (Local Testing Only)
+To allow testing with free-tier models without spending Mesh credits during development, Deeptrace includes a dev-only provider abstraction (`vresearch/providers.py`) with strict guardrails:
+- **Registry**: Exactly two providers exist in the codebase: `mesh` and `openrouter`.
+- **Activation Guardrail**: OpenRouter activates **only** if `LLM_PROVIDER=openrouter` AND `ALLOW_DEV_PROVIDER=1`. Otherwise, the server refuses startup with an explicit guardrail error.
+- **Production Refusal**: In containerized production deployments (`DEPLOY_ENV=production` in the Dockerfile), any non-Mesh provider is strictly refused.
+- **Auditable Dev Flags**: Any run executed under a dev provider surfaces a visible `DEV PROVIDER` badge in the UI and outputs a prominent warning banner (`DEV RUN, not valid for submission`) in evaluation exports.
 
 ### Model Allocation & Verification Diversity
 - **Primary Model (`MESH_MODEL`)**: Typically `openai/gpt-4o-mini` for planning, query refinement, claim drafting, and report synthesis.
@@ -138,7 +147,7 @@ python -m uvicorn server:app --reload --port 7860
 ### Running Tests
 
 ```bash
-# Run full offline test suite (15 tests: pipeline, parallelism, and server streaming)
+# Run full offline test suite (23 tests: pipeline, parallelism, providers, and server streaming)
 python -m pytest -v
 ```
 

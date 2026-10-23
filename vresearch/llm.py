@@ -1,5 +1,7 @@
-"""Single entry point for every LLM call. Supports Mesh API gateway and OpenAI direct."""
+"""Single entry point for every LLM call. Supports Mesh API gateway and dev-only OpenRouter."""
 import json
+import random
+import re
 import threading
 import time
 from typing import Any, Callable
@@ -7,10 +9,19 @@ from typing import Any, Callable
 from openai import OpenAI
 
 from .config import Settings, get_settings
+from .providers import Provider, get_provider
+
+
+def strip_thinking(text: str) -> str:
+    """Strip <think>...</think> reasoning blocks from model output."""
+    if not text:
+        return ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
 
 
 def extract_json(text: str) -> Any:
-    text = (text or "").strip()
+    """Extract and parse JSON from model output, stripping any thinking blocks first."""
+    text = strip_thinking(text or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
         if text.lower().startswith("json"):
@@ -51,11 +62,17 @@ class LLM:
     def __init__(self, settings: Settings | None = None, on_llm_call: Callable[[dict], None] | None = None,
                  provider: str | None = None):
         self.s = settings or get_settings()
-        self.provider = (provider or self.s.llm_provider or "mesh").lower()
-        self.api_key, self.base_url, self.model, self.verifier_model = self.s.get_provider_config(self.provider)
-        if not self.api_key:
-            raise RuntimeError(f"API key for provider '{self.provider}' is not set in .env.")
-        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=90)
+        prov_name = provider or self.s.llm_provider
+        self.provider: Provider = get_provider(prov_name)
+        if not self.provider.api_key:
+            raise RuntimeError(f"API key for provider '{self.provider.name}' is not set in environment.")
+
+        self.client = OpenAI(
+            base_url=self.provider.base_url,
+            api_key=self.provider.api_key,
+            default_headers=self.provider.default_headers if self.provider.default_headers else None,
+            timeout=90,
+        )
         self.calls = 0
         self.on_llm_call = on_llm_call
         self._limiter = threading.Semaphore(max(1, self.s.llm_concurrency))
@@ -63,29 +80,36 @@ class LLM:
     def chat(self, system: str, user: str, *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int = 2000, tag: str = "") -> str:
         last: Exception | None = None
-        target_model = model or self.model
-        if self.provider == "openai" and target_model.startswith("openai/"):
-            target_model = target_model.replace("openai/", "")
+        target_model = model or self.s.get_model_for_tag(tag)
+        if not target_model:
+            raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
-        for attempt in range(3):
+        # Build extra_body
+        extra_body: dict[str, Any] = dict(self.s.llm_extra_body)
+        if self.provider.name == "openrouter" and self.s.openrouter_fallback_models:
+            models_list = [target_model] + [m for m in self.s.openrouter_fallback_models if m != target_model]
+            extra_body["models"] = models_list
+
+        for attempt in range(4):
             try:
                 with self._limiter:
                     t0 = time.time()
+                    kwargs: dict[str, Any] = {
+                        "model": target_model,
+                        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    }
+                    if extra_body:
+                        kwargs["extra_body"] = extra_body
+
                     try:
-                        r = self.client.chat.completions.create(
-                            model=target_model,
-                            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                        )
+                        r = self.client.chat.completions.create(**kwargs)
                     except Exception as temp_err:
                         # Some reasoning models reject temperature parameter
                         if "temperature" in str(temp_err).lower():
-                            r = self.client.chat.completions.create(
-                                model=target_model,
-                                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                                max_tokens=max_tokens,
-                            )
+                            kwargs.pop("temperature", None)
+                            r = self.client.chat.completions.create(**kwargs)
                         else:
                             raise temp_err
 
@@ -94,27 +118,74 @@ class LLM:
                     tokens = 0
                     if hasattr(r, "usage") and r.usage:
                         tokens = getattr(r.usage, "total_tokens", 0) or 0
+
+                    # OpenRouter returns winning fallback model in r.model
+                    actual_model = getattr(r, "model", None) or target_model
+
                     if self.on_llm_call:
                         self.on_llm_call({
                             "tag": tag or "llm",
-                            "model": target_model,
+                            "model": actual_model,
                             "ms": ms,
                             "tokens": tokens,
-                            "provider": self.provider
+                            "provider": self.provider.name,
                         })
-                    return r.choices[0].message.content or ""
+
+                    # Never use separate reasoning field as answer; strip any <think> tags from content
+                    raw_content = r.choices[0].message.content or ""
+                    return strip_thinking(raw_content)
+
             except Exception as e:
                 last = e
-                time.sleep(1.5 * (attempt + 1))
-        raise RuntimeError(f"LLM call failed [{tag}] via {self.provider}: {last}")
+                err_msg = str(e).lower()
+
+                # Detect daily limit / quota exhaustion and fail fast
+                if any(phrase in err_msg for phrase in [
+                    "daily request limit",
+                    "free-model daily request limit",
+                    "daily limit",
+                    "per-day limit",
+                    "quota exceeded",
+                    "credit_balance_exhausted",
+                    "spend_limit_exceeded",
+                    "rate limit exceeded: free",
+                ]):
+                    raise RuntimeError(
+                        "free-model daily request limit reached; try later or switch provider"
+                    ) from e
+
+                # Check for 429 and Retry-After header
+                wait_sec = 0.0
+                if hasattr(e, "response") and e.response is not None:
+                    hdr = e.response.headers.get("retry-after") or e.response.headers.get("Retry-After")
+                    if hdr:
+                        try:
+                            wait_sec = float(hdr)
+                        except ValueError:
+                            pass
+
+                if wait_sec > 0:
+                    time.sleep(min(wait_sec, 30.0))
+                else:
+                    # Exponential backoff with jitter
+                    backoff = (1.5 * (2 ** attempt)) + random.uniform(0.1, 0.7)
+                    time.sleep(backoff)
+
+        raise RuntimeError(f"LLM call failed [{tag}] via {self.provider.name}: {last}")
 
     def json(self, system: str, user: str, *, model: str | None = None,
              tag: str = "", max_tokens: int = 2000) -> Any:
-        sys_json = system + "\n\nRespond with valid JSON only: no prose, no code fences."
+        sys_json = system + "\n\nRespond with valid JSON only: no prose, no code fences, no reasoning tags."
         raw = self.chat(sys_json, user, model=model, temperature=0.1, max_tokens=max_tokens, tag=tag)
         try:
             return extract_json(raw)
         except ValueError:
-            raw = self.chat(sys_json, user + "\n\nYour previous reply was not valid JSON. Reply with JSON only.",
-                            model=model, temperature=0.0, max_tokens=max_tokens, tag=tag + ":retry")
+            raw = self.chat(
+                sys_json,
+                user + "\n\nYour previous reply was not valid JSON. JSON only, no reasoning.",
+                model=model,
+                temperature=0.0,
+                max_tokens=max_tokens,
+                tag=tag + ":retry",
+            )
             return extract_json(raw)

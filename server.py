@@ -14,11 +14,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from vresearch import answer_followup, run_research
 from vresearch.config import get_settings
 from vresearch.export import to_html, to_markdown, to_pdf
+from vresearch.providers import get_provider
 from vresearch.store import RunStore
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
 app = FastAPI(title="Deeptrace", description="AI Research Agent")
 settings = get_settings()
+
+# Validate provider guardrails at startup
+get_provider(settings.llm_provider)
 
 SAMPLE_PATH = os.path.join(WEB, "sample_run.json")
 SAMPLE = json.load(open(SAMPLE_PATH, encoding="utf-8")) if os.path.exists(SAMPLE_PATH) else {"events": [], "report": {}}
@@ -60,6 +64,9 @@ def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, c
                     on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p}),
                     provider=provider
                 )
+            if rep and isinstance(rep, dict) and "metrics" in rep:
+                rep["metrics"]["provider"] = provider or settings.llm_provider
+                rep["metrics"]["model"] = settings.model
             q.put({"kind": "report", "report": rep})
         except Exception as ex:
             q.put({"kind": "error", "message": str(ex)[:300]})
@@ -96,13 +103,12 @@ def index():
 def status():
     return {
         "name": "Deeptrace",
-        "live": bool(settings.api_key or settings.openai_api_key),
-        "mesh": bool(settings.api_key),
-        "openai": bool(settings.openai_api_key),
-        "tavily": bool(os.getenv("TAVILY_API_KEY")),
-        "default_provider": settings.llm_provider,
+        "live": bool(settings.api_key),
+        "provider": settings.llm_provider,
+        "dev_only": settings.llm_provider != "mesh",
         "model": settings.model,
         "verifier_model": settings.verifier_model,
+        "tavily": bool(os.getenv("TAVILY_API_KEY")),
     }
 
 
@@ -116,7 +122,7 @@ async def create_run(
 ):
     q = question.strip()[:400]
     client_ip = request.client.host if request.client else "unknown"
-    selected_provider = (provider or settings.llm_provider or "mesh").lower()
+    selected_provider = settings.llm_provider
 
     # Check upload sizes and extensions
     uploads: list[tuple[str, bytes]] = []
@@ -133,7 +139,7 @@ async def create_run(
             raise HTTPException(400, "Uploaded documents exceed 10 MB total limit.")
         uploads.append((f.filename, content))
 
-    has_key = bool(settings.openai_api_key if selected_provider == "openai" else settings.api_key)
+    has_key = bool(settings.api_key)
     is_sample = bool(sample or not has_key or not q)
     if not is_sample:
         with ip_lock:

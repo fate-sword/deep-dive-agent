@@ -47,10 +47,11 @@ def test_create_run_and_stream_sample():
 
 def test_create_run_with_provider():
     client = TestClient(app)
-    r = client.post("/api/runs", data={"question": "Test EV battery market?", "sample": 1, "provider": "openai"})
+    r = client.post("/api/runs", data={"question": "Test EV battery market?", "sample": 1})
     assert r.status_code == 200
     run_info = r.json()
-    assert run_info["provider"] == "openai"
+    assert "provider" in run_info
+    assert run_info["provider"] in ("mesh", "openrouter")
 
 
 def test_file_upload_handling():

@@ -147,6 +147,16 @@ nav {
 .mode-badge.live { color: var(--ok); border-color: rgba(31,138,91,0.3); background: var(--ok-bg); }
 .mode-badge.live .dot { background: var(--ok); }
 .mode-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.dev-chip {
+  font: 700 11px var(--font-mono);
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 
 /* Buttons */
 .btn {
@@ -693,7 +703,7 @@ h1.hero {
 .log-tag.verifier { color: #059669; }
 .log-tag.coverage { color: var(--warn); }
 .log-tag.synthesizer { color: #d97706; }
-.log-tag.mesh, .log-tag.openai { color: #64748b; font-weight: 500; }
+.log-tag.mesh, .log-tag.openrouter { color: #64748b; font-weight: 500; }
 .log-tag.error { color: var(--bad); }
 
 @keyframes in { from { opacity: 0; } to { opacity: 1; } }
@@ -972,6 +982,7 @@ footer {
       <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
     </div>
     <div class="nav-actions">
+      <span class="dev-chip" id="dev-chip" style="display:none" title="Running with dev-only model provider">DEV PROVIDER</span>
       <div class="mode-badge" id="mode-badge"><span class="dot"></span><span id="mode-text">Checking...</span></div>
       <button type="button" class="btn btn-dark btn-pill" id="nav-new-btn" onclick="resetForm()">New Research</button>
     </div>
@@ -999,16 +1010,10 @@ footer {
       </div>
 
       <div class="card-sub-strip">
-        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <div class="seg" role="tablist" aria-label="Research Depth">
-            <button type="button" role="tab" id="depth-std" aria-selected="true" onclick="setDepth('std')">Standard (2 loops)</button>
-            <button type="button" role="tab" id="depth-deep" aria-selected="false" onclick="setDepth('deep')">Deep (4 loops)</button>
-            <button type="button" role="tab" id="depth-quick" aria-selected="false" onclick="setDepth('quick')">Quick (1 loop)</button>
-          </div>
-          <div class="seg" role="tablist" aria-label="LLM Gateway" id="provider-seg">
-            <button type="button" role="tab" id="prov-mesh" aria-selected="true" onclick="setProvider('mesh')" title="Mesh API Gateway (api.meshapi.ai) — Hackathon Requirement">Mesh API</button>
-            <button type="button" role="tab" id="prov-openai" aria-selected="false" onclick="setProvider('openai')" title="Direct OpenAI API (Dev Toggle)">OpenAI Direct</button>
-          </div>
+        <div class="seg" role="tablist" aria-label="Research Depth">
+          <button type="button" role="tab" id="depth-std" aria-selected="true" onclick="setDepth('std')">Standard (2 loops)</button>
+          <button type="button" role="tab" id="depth-deep" aria-selected="false" onclick="setDepth('deep')">Deep (4 loops)</button>
+          <button type="button" role="tab" id="depth-quick" aria-selected="false" onclick="setDepth('quick')">Quick (1 loop)</button>
         </div>
         <div class="file-chips" id="file-chips"></div>
       </div>
@@ -1146,7 +1151,6 @@ let state = {
   t0: 0,
   uploadedFiles: [],
   depth: 'std',
-  provider: 'mesh',
   statusData: null,
   activeLanes: {},
   claims: {},
@@ -1155,44 +1159,36 @@ let state = {
   stepCount: 0
 };
 
-function updateModeBadge() {
-  const badge = $('#mode-badge');
-  const txt = $('#mode-text');
-  if (!state.statusData) return;
-  const s = state.statusData;
-  const isMesh = state.provider === 'mesh';
-  const hasKey = isMesh ? s.mesh : s.openai;
-  const provName = isMesh ? 'Mesh API' : 'OpenAI Direct';
-
-  if (hasKey) {
-    badge.className = 'mode-badge live';
-    txt.textContent = `● Live (${provName})`;
-  } else {
-    badge.className = 'mode-badge';
-    txt.textContent = `○ Sample mode (no ${isMesh ? 'Mesh' : 'OpenAI'} key)`;
-  }
-}
-
-function setProvider(p) {
-  state.provider = p;
-  $('#prov-mesh').setAttribute('aria-selected', p === 'mesh');
-  $('#prov-openai').setAttribute('aria-selected', p === 'openai');
-  updateModeBadge();
-}
-
 // Check backend status
 fetch('/api/status')
   .then(r => r.json())
   .then(s => {
     state.statusData = s;
     state.live = s.live;
-    if (s.default_provider) {
-      setProvider(s.default_provider);
+    const badge = $('#mode-badge');
+    const txt = $('#mode-text');
+    const devChip = $('#dev-chip');
+
+    // Show DEV PROVIDER warning chip if not mesh
+    if (s.dev_only || (s.provider && s.provider !== 'mesh')) {
+      devChip.style.display = 'inline-block';
     } else {
-      updateModeBadge();
+      devChip.style.display = 'none';
+    }
+
+    if (s.live) {
+      badge.className = 'mode-badge live';
+      const modelShort = (s.model || '').split('/').pop() || s.model;
+      txt.textContent = `● ${s.provider} / ${modelShort}`;
+      badge.title = `Provider: ${s.provider} | Model: ${s.model}`;
+    } else {
+      badge.className = 'mode-badge';
+      txt.textContent = `○ Sample mode (no ${s.provider || 'mesh'} key)`;
     }
   })
   .catch(() => {
+    $('#mode-text').textContent = '○ Offline';
+  });
     $('#mode-text').textContent = '○ Offline';
   });
 
@@ -1407,7 +1403,6 @@ function startRun(query, isSample) {
   const fd = new FormData();
   fd.append('question', query);
   fd.append('sample', isSample ? '1' : '0');
-  fd.append('provider', state.provider || 'mesh');
   for (const f of state.uploadedFiles) {
     fd.append('files', f);
   }
@@ -1551,12 +1546,15 @@ function renderReport(r) {
 
   // Metric pills
   const groundedPct = Math.round((m.groundedness || 0) * 100);
+  const prov = m.provider || (state.statusData ? state.statusData.provider : 'mesh');
+  const mod = (m.model || (state.statusData ? state.statusData.model : '')).split('/').pop();
   $('#report-metrics').innerHTML = `
     <span class="metric-pill highlight">✓ ${groundedPct}% Grounded</span>
     <span class="metric-pill">${m.claims_verified || 0}/${m.claims_total || 0} Claims Verified</span>
     <span class="metric-pill">${m.claims_rejected || 0} Rejected</span>
     <span class="metric-pill">${m.loops || 0} Loop-back${m.loops === 1 ? '' : 's'}</span>
     <span class="metric-pill">${m.sources_cited || 0} Sources Cited</span>
+    <span class="metric-pill" style="font-size:11px; color:var(--muted);">${esc(prov)}${mod ? ' / ' + esc(mod) : ''}</span>
   `;
 
   // Body content with citations
@@ -1666,7 +1664,7 @@ function askFollowup() {
   fetch(`/api/runs/${encodeURIComponent(rid)}/followup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: q, provider: state.provider || 'mesh' })
+    body: JSON.stringify({ question: q })
   })
     .then(r => r.json())
     .then(data => {
