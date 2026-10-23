@@ -20,15 +20,6 @@ def to_markdown(r: dict) -> str:
         if s["thin"]:
             out.append("> Evidence was limited here; treat conclusions with caution.")
         out.append("")
-    if r["contradictions"]:
-        out.append("## Where sources disagree")
-        for x in r["contradictions"]:
-            out.append(f"- {x['explanation']}")
-            for c in x["claims"]:
-                out.append(f"  - {c['text']} " + "".join(f"[{n}]" for n in c["sources"]))
-            if x.get("more_reliable"):
-                out.append(f"  - Higher-quality source backs {x['more_reliable']}")
-        out.append("")
     out.append("## Sources")
     out += [f"{b['n']}. [{b['title']}]({b['url']}) ({b['tier']} source)" for b in r["sources"]]
     out += ["", "## Audit trail: accepted claims"]
@@ -52,12 +43,6 @@ def to_html(r: dict) -> str:
         p.append(f"<h2>{e(s['question'])}</h2><p>{e(s['text']) or '<em>No verified evidence found.</em>'}</p>")
         if s["thin"]:
             p.append("<p class='warn'>Evidence was limited here.</p>")
-    if r["contradictions"]:
-        p.append("<h2>Where sources disagree</h2><ul>")
-        for x in r["contradictions"]:
-            items = "".join(f"<li>{e(c['text'])} {''.join(f'[{n}]' for n in c['sources'])}</li>" for c in x["claims"])
-            p.append(f"<li>{e(x['explanation'])}<ul>{items}</ul></li>")
-        p.append("</ul>")
     p.append("<h2>Sources</h2><ol>" + "".join(
         f"<li><a href='{e(b['url'])}'>{e(b['title'])}</a> <small>({b['tier']})</small></li>" for b in r["sources"]) + "</ol>")
     for title, key in (("Accepted claims", "accepted"), ("Unverified claims", "unverified"), ("Rejected claims", "rejected")):
@@ -103,12 +88,6 @@ def to_pdf(r: dict) -> bytes:
         para(s["text"] or "No verified evidence was found for this sub-question.")
         if s["thin"]:
             para("Evidence was limited here; treat conclusions with caution.", "Italic")
-    if r["contradictions"]:
-        h("Where sources disagree")
-        for x in r["contradictions"]:
-            para(x["explanation"])
-            for c in x["claims"]:
-                para("- " + c["text"] + " " + "".join(f"[{n}]" for n in c["sources"]))
     h("Sources")
     for b in r["sources"]:
         para(f"[{b['n']}] {b['title']} - {b['url']} ({b['tier']})")
