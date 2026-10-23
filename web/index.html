@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verified Research</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fbfbf9;--ink:#111;--mut:#6b6b66;--line:#e7e6e1;--ok:#1f8a5b;--warn:#b7791f;--bad:#c2410c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 Inter,system-ui,sans-serif;overflow-x:hidden}
+.tile{position:absolute;width:72px;height:72px;border-radius:6px;background:linear-gradient(135deg,#cfe4ff,#eaf5ff 55%,#bfe9dc)}
+.tile:nth-child(3n){filter:hue-rotate(40deg)}.tile:nth-child(3n+1){background:linear-gradient(160deg,#bfe9dc,#e5f3ff 60%,#c9dcff)}
+@media(max-width:1100px){.tile{display:none}}
+.wrap{position:relative;max-width:1040px;margin:0 auto;padding:0 20px}
+nav{display:flex;justify-content:space-between;align-items:center;padding:22px 0;font-weight:600}
+nav span{font:500 12px 'JetBrains Mono',monospace;color:var(--mut)}
+h1{font:400 clamp(40px,6.4vw,66px)/1.04 Newsreader,Georgia,serif;letter-spacing:-.025em;text-align:center;margin:56px 0 14px}
+.sub{text-align:center;color:var(--mut);font-size:17px;margin:0 auto 30px;max-width:560px}
+.card{background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 14px 44px rgba(20,20,20,.06);max-width:860px;margin:0 auto;overflow:hidden}
+.ask{display:flex;gap:10px;align-items:center;padding:14px 14px 14px 22px}
+.ask input{flex:1;border:0;outline:0;font:17px Inter,sans-serif;background:none;min-width:0}
+.go{width:38px;height:38px;border-radius:50%;border:0;background:var(--ink);color:#fff;font-size:18px;cursor:pointer}.go:disabled{opacity:.35}
+.ex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:16px 0 0;font:12px 'JetBrains Mono',monospace}
+.ex button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 12px;cursor:pointer;color:var(--mut);font:inherit}.ex button:hover{color:var(--ink);border-color:#cfcdc5}
+#run{display:none;border-top:1px solid var(--line)}
+.rail{display:flex;padding:18px 22px 10px;gap:6px}
+.st{flex:1;text-align:center;font:500 11px 'JetBrains Mono',monospace;color:#9a9a93;position:relative}
+.st i{display:grid;place-items:center;width:30px;height:30px;margin:0 auto 6px;border:1.5px solid var(--line);border-radius:50%;font-style:normal;background:#fff;position:relative;z-index:1;transition:.3s}
+.st:not(:last-child)::after{content:"";position:absolute;top:15px;left:calc(50% + 18px);right:calc(-50% + 18px);height:1.5px;background:var(--line)}
+.st.active{color:var(--ink)}.st.active i{border-color:var(--ink);animation:pulse 1.4s infinite}
+.st.done{color:var(--ok)}.st.done i{background:var(--ok);border-color:var(--ok);color:#fff}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(17,17,17,.18)}100%{box-shadow:0 0 0 9px rgba(17,17,17,0)}}
+#hint{text-align:center;font:12px 'JetBrains Mono',monospace;color:var(--warn);height:18px;opacity:0;transition:.4s}#hint.on{opacity:1}
+.cols{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;padding:6px 18px 18px}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.pane{max-height:310px;overflow:auto;padding-right:2px}
+.lab{font:500 11px 'JetBrains Mono',monospace;color:var(--mut);margin:0 0 6px;letter-spacing:.04em}
+.sq{font-size:13px;color:var(--mut);margin:3px 0}.sq b{font:500 11px 'JetBrains Mono',monospace;color:var(--ink);margin-right:6px}
+.cl{border:1px solid var(--line);border-left:3px solid #cfcdc5;border-radius:10px;padding:8px 11px;margin:7px 0;font-size:13.5px;animation:in .35s}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}
+.cl.verified{border-left-color:var(--ok)}.cl.unverified{border-left-color:var(--warn)}.cl.rejected{border-left-color:var(--bad);background:#fffaf7}
+.cl.rejected .t{text-decoration:line-through;color:var(--mut)}
+.cl small{display:block;font:11px 'JetBrains Mono',monospace;margin-top:4px;color:var(--mut)}
+.chip{display:inline-block;font:11px 'JetBrains Mono',monospace;background:#f1efe9;border-radius:4px;padding:1px 6px;margin:4px 4px 0 0}
+.log{background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:12px/1.65 'JetBrains Mono',monospace;max-height:310px;overflow:auto;color:#44443f}
+.log div{animation:in .3s}.log b{color:var(--ink);font-weight:500}.log .bad{color:var(--bad)}.log .ok{color:var(--ok)}.log .warn{color:var(--warn)}.log .t0{color:#a8a8a0}
+#banner{display:none;text-align:center;font:12px 'JetBrains Mono',monospace;color:var(--warn);background:#fff8ea;padding:6px}
+#report{display:none;max-width:740px;margin:56px auto 80px}
+#report h2{font:400 34px/1.15 Newsreader,Georgia,serif;letter-spacing:-.02em;margin:0 0 6px}
+#report h3{font:500 18px Newsreader,Georgia,serif;margin:26px 0 4px}
+.met{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.met span{font:12px 'JetBrains Mono',monospace;border:1px solid var(--line);background:#fff;border-radius:99px;padding:3px 11px}
+sup{font:11px 'JetBrains Mono',monospace;color:var(--mut)}
+.src li{margin:3px 0;font-size:13px}.src a{color:inherit}
+.dl{display:flex;gap:10px;margin-top:20px}.dl a{background:var(--ink);color:#fff;text-decoration:none;border-radius:99px;padding:8px 18px;font-size:13px}.dl a.o{background:#fff;color:var(--ink);border:1px solid var(--line)}
+footer{text-align:center;color:var(--mut);font:12px 'JetBrains Mono',monospace;padding:0 0 40px}
+</style></head><body>
+<div aria-hidden="true"><div class="tile" style="left:0;top:40px"></div><div class="tile" style="left:86px;top:140px"></div><div class="tile" style="left:10px;top:330px"></div><div class="tile" style="left:110px;top:430px"></div>
+<div class="tile" style="right:0;top:60px"></div><div class="tile" style="right:84px;top:170px"></div><div class="tile" style="right:8px;top:360px"></div><div class="tile" style="right:104px;top:450px"></div></div>
+<div class="wrap">
+<nav><div>◧ Verified Research</div><span id="mode">checking…</span></nav>
+<h1>Research you can check.</h1>
+<p class="sub">Five agents plan, search, draft and fact-check every claim against its source before it reaches your report.</p>
+<div class="card">
+ <form class="ask" id="f"><input id="q" placeholder="Ask a research question…" maxlength="400" autocomplete="off"><button class="go" id="go" title="Run">↑</button></form>
+ <div id="banner">Sample run: illustrative data, not live research</div>
+ <div id="run"><div class="rail" id="rail"></div><div id="hint"></div>
+  <div class="cols"><div><p class="lab">CLAIMS · EVIDENCE CHECK</p><div class="pane" id="claims"></div></div>
+  <div><p class="lab">RUN LOG</p><div class="log" id="log"></div></div></div></div>
+</div>
+<div class="ex" id="ex"></div>
+<div id="report"></div>
+<footer>Every LLM call is routed through Mesh API</footer>
+</div>
+<script>
+const $=s=>document.querySelector(s),N=['Planner','Researcher','Drafter','Verifier','Synthesizer'];
+const MAP={plan:0,research:1,draft:2,verify:3,coverage:3,contradict:4,synthesize:4};
+const EXAMPLES=['What are the main risks of investing in the EV battery market in 2026?','What is the state of solid-state battery commercialization?','What are the barriers to heat pump adoption in Europe?'];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let es,cards={},t0=0,finished=true,live=false;
+$('#rail').innerHTML=N.map((n,i)=>`<div class="st" id="s${i}"><i>${i+1}</i>${n.toUpperCase()}</div>`).join('');
+$('#ex').innerHTML=EXAMPLES.map(x=>`<button type="button">${esc(x.length>46?x.slice(0,44)+'…':x)}</button>`).join('')+'<button type="button" id="smp">▶ see a sample run</button>';
+document.querySelectorAll('#ex button').forEach((b,i)=>b.onclick=()=>i<EXAMPLES.length?(($('#q').value=EXAMPLES[i]),start(EXAMPLES[i],0)):start('',1));
+fetch('/api/status').then(r=>r.json()).then(s=>{live=s.live;$('#mode').textContent=live?'● live':'○ sample mode (no API key)'}).catch(()=>{$('#mode').textContent='○ offline'});
+$('#f').onsubmit=e=>{e.preventDefault();start($('#q').value.trim(),0)};
+function stage(i){for(let j=0;j<5;j++){const e=$('#s'+j);e.className='st'+(j<i?' done':j==i?' active':'');if(j<i)e.firstChild.textContent='✓'}}
+function log(html,cls=''){const L=$('#log'),d=document.createElement('div');d.innerHTML=`<span class="t0">[${((Date.now()-t0)/1000).toFixed(1).padStart(4,'0')}]</span> ${html}`;if(cls)d.className=cls;L.appendChild(d);L.scrollTop=1e9}
+function chips(a){return (a||[]).map(s=>`<span class="chip">${esc(s)}</span>`).join('')}
+function card(c){if(cards[c.cid])return;const d=document.createElement('div');d.className='cl';d.innerHTML=`<b>${esc(c.cid)}</b> <span class="t">${esc(c.text)}</span><br>${chips(c.sources)}<small></small>`;$('#claims').appendChild(d);cards[c.cid]=d;$('#claims').scrollTop=1e9}
+function start(q,sample){
+ if(!sample&&!q)return;if(es)es.close();finished=false;cards={};t0=Date.now();
+ $('#run').style.display='block';$('#claims').innerHTML='';$('#log').innerHTML='';$('#report').style.display='none';
+ $('#banner').style.display=(sample||!live)?'block':'none';$('#go').disabled=true;stage(0);
+ es=new EventSource('/api/run?q='+encodeURIComponent(q)+(sample?'&sample=1':''));
+ es.onmessage=e=>handle(JSON.parse(e.data));
+ es.onerror=()=>{es.close();if(!finished){finished=true;$('#go').disabled=false;log('connection lost','bad')}};
+}
+function handle(ev){
+ const{step,kind,payload:p={}}=ev;
+ if(kind==='report'){finished=true;es.close();$('#go').disabled=false;for(let j=0;j<5;j++){const e=$('#s'+j);e.className='st done';e.firstChild.textContent='✓'}log('<b>synthesizer</b> report ready','ok');$('#hint').className='';return showReport(ev.report)}
+ if(kind==='error'){finished=true;es.close();$('#go').disabled=false;return log('error: '+esc(ev.message),'bad')}
+ if(kind==='loop_back'){stage(1);$('#hint').textContent='not enough proof → searching again';$('#hint').className='on';return log(`<b>coverage</b> thin: ${esc((p.weak||[]).join(', '))} → searching again`,'warn')}
+ if(kind==='done'){$('#hint').className=''}
+ if(step in MAP&&kind!=='done')stage(MAP[step]);
+ if(kind==='subquestions'){$('#claims').insertAdjacentHTML('afterbegin',p.sub_questions.map(s=>`<div class="sq"><b>${esc(s.id)}</b>${esc(s.question)}</div>`).join(''));log(`<b>planner</b> ${p.sub_questions.length} sub-questions`)}
+ else if(kind==='search')log(`<b>researcher</b> ${esc(p.subq)} “${esc(p.query)}” → ${p.results} results`);
+ else if(kind==='evidence')log(`<b>researcher</b> ${esc(p.subq)} ${p.passages} passages stored`);
+ else if(kind==='no_evidence')log(`<b>drafter</b> ${esc(p.subq)} no evidence`,'warn');
+ else if(kind==='claims'){(p.items||[]).forEach(card);log(`<b>drafter</b> ${esc(p.subq)} ${(p.items||[]).length} new claims`)}
+ else if(kind==='verdict'){const d=cards[p.cid];if(d){d.className='cl '+(p.status==='verified'?'verified':p.status==='rejected'?'rejected':'unverified');
+   d.querySelector('small').textContent=(p.status==='verified'?'✓ verified':p.status==='rejected'?'✕ rejected':'? unverified')+(p.reason?' · '+p.reason:'')}
+   log(`<b>verifier</b> ${esc(p.cid)} ${esc(p.status)}${p.status==='verified'?'':' — '+esc(p.reason)}`,p.status==='verified'?'ok':p.status==='rejected'?'bad':'warn')}
+ else if(kind==='found')log(`<b>contradictions</b> ${(p.contradictions||[]).length} found`);
+}
+function showReport(r){
+ const m=r.metrics,cite=t=>esc(t).replace(/\[(\d+)\]/g,'<sup>[$1]</sup>');
+ $('#report').innerHTML=`<h2>${esc(r.question)}</h2><div class="met"><span>${Math.round(m.groundedness*100)}% grounded</span><span>${m.claims_verified}/${m.claims_total} claims verified</span><span>${m.claims_rejected} rejected</span><span>${m.loops} loop-back${m.loops==1?'':'s'}</span><span>${m.contradictions} contradictions</span></div>
+ <p>${cite(r.summary)}</p>${r.sections.map(s=>`<h3>${esc(s.question)}</h3><p>${cite(s.text)||'<em>No verified evidence found.</em>'}${s.thin?' <em>(evidence was limited)</em>':''}</p>`).join('')}
+ ${r.contradictions.length?'<h3>Where sources disagree</h3>'+r.contradictions.map(x=>`<p>${esc(x.explanation)}</p>`).join(''):''}
+ <h3>Sources</h3><ol class="src">${r.sources.map(b=>`<li><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a> <span class="chip">${esc(b.tier)}</span></li>`).join('')}</ol>
+ <div class="dl"><a href="/api/report/${r.run_id}.pdf">Download PDF</a><a class="o" href="/api/report/${r.run_id}.html" target="_blank">Shareable page</a><a class="o" href="/api/report/${r.run_id}.md">Markdown</a></div>`;
+ $('#report').style.display='block';$('#report').scrollIntoView({behavior:'smooth',block:'start'});
+}
+</script></body></html>

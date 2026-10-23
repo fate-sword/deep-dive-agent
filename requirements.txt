@@ -1,0 +1,14 @@
+openai>=1.40
+langgraph>=0.2
+ddgs>=9.0
+trafilatura>=1.12
+requests>=2.31
+rank-bm25>=0.2.2
+pypdf>=4.0
+reportlab>=4.0
+streamlit>=1.38
+python-dotenv>=1.0
+pytest>=8.0
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.12

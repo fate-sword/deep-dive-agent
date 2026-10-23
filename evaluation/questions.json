@@ -1,0 +1,18 @@
+[
+  {"id": "ev-risks", "question": "What are the main risks of investing in the EV battery market in 2026?",
+   "expected_topics": ["lithium", "china", "overcapacity", "regulation", "solid-state"]},
+  {"id": "solid-state", "question": "What is the current state of solid-state battery commercialization?",
+   "expected_topics": ["toyota", "samsung", "quantumscape", "electrolyte", "cost"]},
+  {"id": "lithium-supply", "question": "How has lithium supply and pricing changed over the last two years and why?",
+   "expected_topics": ["price", "australia", "chile", "oversupply", "demand"]},
+  {"id": "eu-regulation", "question": "What EU regulations affect battery manufacturers and recyclers?",
+   "expected_topics": ["battery regulation", "recycl", "passport", "carbon footprint", "due diligence"]},
+  {"id": "heat-pumps", "question": "What are the main barriers to heat pump adoption in Europe?",
+   "expected_topics": ["cost", "installer", "electricity", "retrofit", "subsid"]},
+  {"id": "gen-ai-energy", "question": "How much electricity do data centers for AI consume and how fast is it growing?",
+   "expected_topics": ["twh", "iea", "growth", "grid", "gpu"]},
+  {"id": "india-ev", "question": "What is the state of the electric two-wheeler market in India?",
+   "expected_topics": ["ola", "ather", "subsid", "fame", "market share"]},
+  {"id": "thin-evidence", "question": "What were the 2025 quarterly revenues of the private company Zorblax Battery Dynamics?",
+   "expected_topics": []}
+]
