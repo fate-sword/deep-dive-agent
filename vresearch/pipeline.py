@@ -152,7 +152,11 @@ def build_graph(ctx: Ctx):
                 ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no evidence found")
                 return
             existing = [c["text"] for c in claims if c["subq_id"] == q["id"] and c["status"] != "rejected"]
-            drafted = agents.draft_claims(ctx.llm, q, ev, existing)
+            try:
+                drafted = agents.draft_claims(ctx.llm, q, ev, existing)
+            except Exception as e:
+                ctx.log("draft", "fallback", {"subq": q["id"], "error": str(e)}, f"Drafter [{q['id']}]: drafting error: {str(e)[:100]}")
+                drafted = []
             items = []
             for c in drafted:
                 txt = c["text"].lower()
@@ -185,8 +189,16 @@ def build_graph(ctx: Ctx):
         claims = [dict(c) for c in state["claims"]]
         ev_by_id = {e["eid"]: e for e in state["evidence"]}
         pending = [c for c in claims if c["status"] == "pending"]
+
+        def verify_single(c):
+            try:
+                return agents.verify_claim(ctx.llm, c, ev_by_id, s.verifier_model)
+            except Exception as e:
+                ctx.log("verify", "fallback", {"cid": c["cid"], "error": str(e)})
+                return {"status": "unverified", "verdict": "unsupported", "reason": f"Verification error: {str(e)[:100]}", "quote": ""}
+
         with ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(lambda c: agents.verify_claim(ctx.llm, c, ev_by_id, s.verifier_model), pending))
+            results = list(pool.map(verify_single, pending))
         for c, r in zip(pending, results):
             c.update(r)
             ctx.store.save_claim(ctx.run_id, c)

@@ -22,14 +22,32 @@ def strip_thinking(text: str) -> str:
 def extract_json(text: str) -> Any:
     """Extract and parse JSON from model output, stripping any thinking blocks first."""
     text = strip_thinking(text or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
+
+    # Try direct parse
     try:
         return json.loads(text)
     except Exception:
         pass
+
+    # Try extracting from markdown code block fences: ```json ... ``` or ``` ... ```
+    fence_match = re.search(r"```(?:json)?\s*([\{\[].*?[\}\]])\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1).strip())
+        except Exception:
+            pass
+
+    # Strip leading/trailing code fences if present
+    cleaned = text
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        try:
+            return json.loads(cleaned.strip())
+        except Exception:
+            pass
+
+    # Bracket matching search
     starts = sorted(i for i in (text.find("{"), text.find("[")) if i != -1)
     for start in starts:
         open_c = text[start]
