@@ -1466,12 +1466,16 @@ function handleEvent(ev) {
     return;
   }
 
-  if (kind === 'error') {
+  if (kind === 'error' || step === 'error') {
     state.running = false;
     if (state.eventSource) state.eventSource.close();
     qInput.disabled = false;
     sendBtn.disabled = false;
-    addLog('error', esc(ev.message), 'bad');
+    const msg = ev.message || (p && p.message) || 'An error occurred';
+    addLog('error', esc(msg), 'bad');
+    if (msg.includes('daily request limit') || msg.includes('Rate limit') || msg.includes('rate-limited')) {
+      addLog('system', '💡 <em>Free model daily quota reached.</em> <button type="button" class="btn btn-soft btn-pill" style="padding:2px 8px; font-size:11px; margin-left:6px;" onclick="startSampleRun()">Run Recorded Sample Demo</button>');
+    }
     return;
   }
 

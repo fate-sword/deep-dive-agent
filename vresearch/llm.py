@@ -97,97 +97,111 @@ class LLM:
 
     def chat(self, system: str, user: str, *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int = 2000, tag: str = "") -> str:
-        last: Exception | None = None
         target_model = model or self.s.get_model_for_tag(tag)
         if not target_model:
             raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
-        # Build extra_body
-        extra_body: dict[str, Any] = dict(self.s.llm_extra_body)
+        # Candidate models failover chain: primary model first, then fallbacks
+        candidates = [target_model]
         if self.provider.name == "openrouter" and self.s.openrouter_fallback_models:
-            models_list = [target_model] + [m for m in self.s.openrouter_fallback_models if m != target_model]
-            extra_body["models"] = models_list
+            for fb in self.s.openrouter_fallback_models:
+                if fb not in candidates:
+                    candidates.append(fb)
 
-        for attempt in range(4):
-            try:
-                with self._limiter:
-                    t0 = time.time()
-                    kwargs: dict[str, Any] = {
-                        "model": target_model,
-                        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    }
-                    if extra_body:
-                        kwargs["extra_body"] = extra_body
+        last: Exception | None = None
+        extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body)
 
-                    try:
-                        r = self.client.chat.completions.create(**kwargs)
-                    except Exception as temp_err:
-                        # Some reasoning models reject temperature parameter
-                        if "temperature" in str(temp_err).lower():
-                            kwargs.pop("temperature", None)
-                            r = self.client.chat.completions.create(**kwargs)
-                        else:
-                            raise temp_err
+        for current_model in candidates:
+            extra_body: dict[str, Any] = dict(extra_body_base)
+            if self.provider.name == "openrouter":
+                rem_fallbacks = [m for m in candidates if m != current_model]
+                if rem_fallbacks:
+                    extra_body["models"] = [current_model] + rem_fallbacks
 
-                    ms = int((time.time() - t0) * 1000)
-                    self.calls += 1
-                    tokens = 0
-                    if hasattr(r, "usage") and r.usage:
-                        tokens = getattr(r.usage, "total_tokens", 0) or 0
+            for attempt in range(2):
+                try:
+                    with self._limiter:
+                        t0 = time.time()
+                        kwargs: dict[str, Any] = {
+                            "model": current_model,
+                            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                        }
+                        if extra_body:
+                            kwargs["extra_body"] = extra_body
 
-                    # OpenRouter returns winning fallback model in r.model
-                    actual_model = getattr(r, "model", None) or target_model
-
-                    if self.on_llm_call:
-                        self.on_llm_call({
-                            "tag": tag or "llm",
-                            "model": actual_model,
-                            "ms": ms,
-                            "tokens": tokens,
-                            "provider": self.provider.name,
-                        })
-
-                    # Never use separate reasoning field as answer; strip any <think> tags from content
-                    raw_content = r.choices[0].message.content or ""
-                    return strip_thinking(raw_content)
-
-            except Exception as e:
-                last = e
-                err_msg = str(e).lower()
-
-                # Detect daily limit / quota exhaustion and fail fast
-                if any(phrase in err_msg for phrase in [
-                    "daily request limit",
-                    "free-model daily request limit",
-                    "daily limit",
-                    "per-day limit",
-                    "quota exceeded",
-                    "credit_balance_exhausted",
-                    "spend_limit_exceeded",
-                    "rate limit exceeded: free",
-                ]):
-                    raise RuntimeError(
-                        "free-model daily request limit reached; try later or switch provider"
-                    ) from e
-
-                # Check for 429 and Retry-After header
-                wait_sec = 0.0
-                if hasattr(e, "response") and e.response is not None:
-                    hdr = e.response.headers.get("retry-after") or e.response.headers.get("Retry-After")
-                    if hdr:
                         try:
-                            wait_sec = float(hdr)
-                        except ValueError:
-                            pass
+                            r = self.client.chat.completions.create(**kwargs)
+                        except Exception as temp_err:
+                            if "temperature" in str(temp_err).lower():
+                                kwargs.pop("temperature", None)
+                                r = self.client.chat.completions.create(**kwargs)
+                            else:
+                                raise temp_err
 
-                if wait_sec > 0:
-                    time.sleep(min(wait_sec, 30.0))
-                else:
-                    # Exponential backoff with jitter
-                    backoff = (1.5 * (2 ** attempt)) + random.uniform(0.1, 0.7)
-                    time.sleep(backoff)
+                        ms = int((time.time() - t0) * 1000)
+                        self.calls += 1
+                        tokens = 0
+                        if hasattr(r, "usage") and r.usage:
+                            tokens = getattr(r.usage, "total_tokens", 0) or 0
+
+                        actual_model = getattr(r, "model", None) or current_model
+                        if self.on_llm_call:
+                            self.on_llm_call({
+                                "tag": tag or "llm",
+                                "model": actual_model,
+                                "ms": ms,
+                                "tokens": tokens,
+                                "provider": self.provider.name,
+                            })
+
+                        raw_content = r.choices[0].message.content or ""
+                        return strip_thinking(raw_content)
+
+                except Exception as e:
+                    last = e
+                    err_msg = str(e).lower()
+
+                    # If rate-limited or daily limit, try the next fallback model in candidates chain
+                    is_rate_limit = any(term in err_msg for term in [
+                        "rate limit", "429", "daily request limit", "free-model", "quota", "per-day"
+                    ])
+                    if is_rate_limit:
+                        # Try next candidate model
+                        break
+
+                    # Check for Retry-After
+                    wait_sec = 0.0
+                    if hasattr(e, "response") and e.response is not None:
+                        hdr = e.response.headers.get("retry-after") or e.response.headers.get("Retry-After")
+                        if hdr:
+                            try:
+                                wait_sec = float(hdr)
+                            except ValueError:
+                                pass
+
+                    if wait_sec > 0:
+                        time.sleep(min(wait_sec, 15.0))
+                    else:
+                        time.sleep(1.0 + random.uniform(0.1, 0.5))
+
+        # If all candidates in chain failed:
+        err_msg = str(last).lower() if last else ""
+        if any(phrase in err_msg for phrase in [
+            "daily request limit",
+            "free-model daily request limit",
+            "free-models-per-day",
+            "daily limit",
+            "per-day limit",
+            "quota exceeded",
+            "credit_balance_exhausted",
+            "spend_limit_exceeded",
+            "rate limit exceeded: free",
+        ]):
+            raise RuntimeError(
+                "free-model daily request limit reached; try later or switch provider"
+            ) from last
 
         raise RuntimeError(f"LLM call failed [{tag}] via {self.provider.name}: {last}")
 
