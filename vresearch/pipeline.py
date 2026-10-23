@@ -266,6 +266,7 @@ def build_graph(ctx: Ctx):
 
     def synth_node(state: State):
         usable = [c for c in state["claims"] if c["status"] in ("verified", "unverified")]
+        verified_only = [c for c in usable if c["status"] == "verified"]
         by_id = {c["cid"]: c for c in usable}
         registry = SourceRegistry(state["evidence"])
         thin = set(state.get("thin", []))
@@ -275,15 +276,45 @@ def build_graph(ctx: Ctx):
             out = agents.synthesize(ctx.llm, state["question"], state["subqs"], usable, contradictions, thin)
         except Exception as e:  # deterministic fallback: never fail the run on a bad synth call
             ctx.log("synthesize", "fallback", {"error": str(e)})
-            out = {"summary": "", "sections": [
-                {"id": q["id"], "text": " ".join(f"{c['text']} [{c['cid']}]" for c in usable if c["subq_id"] == q["id"])}
-                for q in state["subqs"]]}
-        summary, d = ground_text(out.get("summary", ""), by_id, registry)
+            out = {"summary": "", "sections": []}
+
+        # 1. Executive Summary Grounding & Fallback
+        raw_summary = (out.get("summary") or "").strip()
+        summary, d = ground_text(raw_summary, by_id, registry)
         dropped_all += d
+
+        # If summary was empty or lacked substantive grounded text, auto-synthesize from top verified claims
+        if not summary or not re.search(r"[a-zA-Z]{5,}", summary):
+            summary_sents = []
+            for q in state["subqs"]:
+                q_ver = [c for c in verified_only if c["subq_id"] == q["id"]]
+                if q_ver:
+                    top_c = q_ver[0]
+                    clean_text = top_c["text"].rstrip(".!? ")
+                    summary_sents.append(f"{clean_text} [{top_c['cid']}].")
+            if not summary_sents and usable:
+                for c in usable[:4]:
+                    clean_text = c["text"].rstrip(".!? ")
+                    summary_sents.append(f"{clean_text} [{c['cid']}].")
+            if summary_sents:
+                summary, _ = ground_text(" ".join(summary_sents[:5]), by_id, registry)
+
+        # 2. Section Content Grounding & Fallback
         texts = {s_["id"]: s_.get("text", "") for s_ in out.get("sections", []) if isinstance(s_, dict)}
         for q in state["subqs"]:
-            txt, d = ground_text(texts.get(q["id"], ""), by_id, registry)
+            raw_sec = texts.get(q["id"], "").strip()
+            txt, d = ground_text(raw_sec, by_id, registry)
             dropped_all += d
+
+            # If section text was empty or lacked substantive words, populate from verified claims
+            if not txt or not re.search(r"[a-zA-Z]{3,}", txt):
+                q_claims = [c for c in verified_only if c["subq_id"] == q["id"]]
+                if not q_claims:
+                    q_claims = [c for c in usable if c["subq_id"] == q["id"]]
+                if q_claims:
+                    claim_sents = [f"{c['text'].rstrip('.!? ')} [{c['cid']}]." for c in q_claims[:4]]
+                    txt, _ = ground_text(" ".join(claim_sents), by_id, registry)
+
             sections.append({"id": q["id"], "question": q["question"], "text": txt, "thin": q["id"] in thin})
         contra = []
         for x in contradictions:

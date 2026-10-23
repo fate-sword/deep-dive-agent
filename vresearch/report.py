@@ -7,7 +7,26 @@ CITE_RE = re.compile(r"\[(C\d+(?:\s*[,;]\s*C\d+)*)\]")
 
 
 def split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in re.split(r"(?<=[.!?\]])\s+(?=[A-Z\[])", text.strip()) if s.strip()]
+    """Split text into sentences while ensuring citations stay attached to their preceding text."""
+    if not text:
+        return []
+    # Normalize: if a citation appears right after a period like '. [C1]', merge it into ' [C1].' so periods don't split it
+    normalized = re.sub(r"\.\s*(\[(?:C\d+(?:\s*[,;]\s*C\d+)*)\])", r" \1.", text)
+    # Split on sentence boundaries: period, question mark, or exclamation followed by space and capital letter or newline
+    raw_parts = [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z])|\n+", normalized.strip()) if s.strip()]
+    merged: list[str] = []
+    for part in raw_parts:
+        # Check if this part contains ONLY citations or punctuation with no real words
+        words = re.sub(CITE_RE, "", part).strip()
+        is_only_citations = not bool(re.search(r"[a-zA-Z]{2,}", words)) and bool(CITE_RE.search(part))
+        if is_only_citations and merged:
+            # Reattach orphaned citations to the preceding sentence
+            merged[-1] = merged[-1].rstrip(".!? ") + " " + part.strip()
+            if not merged[-1].endswith((".", "!", "?")):
+                merged[-1] += "."
+        else:
+            merged.append(part)
+    return merged
 
 
 class SourceRegistry:
@@ -47,6 +66,10 @@ def ground_text(text: str, claims_by_id: dict[str, dict], registry: SourceRegist
             dropped.append(sent)
             continue
         body = re.sub(r"\s+([.!?,;])", r"\1", CITE_RE.sub("", sent)).strip()
+        # Enforce that the sentence actually contains substantive words, never bare numbers
+        if not re.search(r"[a-zA-Z]{2,}", body):
+            dropped.append(sent)
+            continue
         end = re.search(r"[.!?]+$", body)
         punct = end.group(0) if end else "."
         body = body[: len(body) - len(punct)] if end else body

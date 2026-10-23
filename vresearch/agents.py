@@ -42,13 +42,21 @@ different or complementary. Return JSON:
 {"contradictions":[{"claim_ids":["C1","C4"],"explanation":"what exactly conflicts"}]}
 Return {"contradictions":[]} if there are none."""
 
-SYNTH_SYS = """You are the SYNTHESIZER. Write a research report answering the user's question using ONLY the claims
+SYNTH_SYS = """You are the SYNTHESIZER. Write a comprehensive, cited research report answering the user's question using ONLY the claims
 provided (each has an id like C3). Rules:
-- Every sentence must end with one or more claim citations like [C3] or [C3][C7]. A sentence with no citation will be deleted.
-- Do not add facts, numbers or opinions that are not in the claims. You may connect and order claims.
+- The "summary" MUST be an informative Executive Summary of 3-5 sentences summarizing the core verified findings across the sub-questions.
+- In both "summary" and "sections", EVERY sentence MUST end with its claim citations like [C3] or [C3][C7]. Place citations directly before the period (e.g. "... increases cellular energy [C3].").
+- Prioritize VERIFIED claims. Do not add facts, numbers or opinions that are not in the claims.
 - Where claims are flagged as contradicting, state the disagreement openly.
 - For sub-questions marked THIN, say briefly that evidence was limited rather than filling the gap.
-Return JSON: {"summary":"3-5 sentences","sections":[{"id":"Q1","text":"2-5 sentences"}]}"""
+
+Example format:
+{
+  "summary": "Regular exercise boosts mitochondrial efficiency and daily energy levels [C10]. Consistent sleep habits and limiting blue light prevent circadian disruptions [C1][C4]. Proper hydration and unrefined diets maintain cognitive focus throughout the day [C7][C8].",
+  "sections": [
+    {"id": "Q1", "text": "High-protein snacks elevate glucose sustainably without causing energy crashes [C1][C2]. Drinking water immediately counteracts sluggishness caused by mild dehydration [C3]."}
+  ]
+}"""
 
 FOLLOWUP_SYS = """You answer a follow-up question using ONLY the earlier verified claims provided (ids like C3).
 Every sentence must end with claim citations like [C3]. If the claims do not cover the question, say so in one
