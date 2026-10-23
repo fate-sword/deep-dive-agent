@@ -76,6 +76,9 @@ def extract_json(text: str) -> Any:
     raise ValueError("no valid JSON found in model output")
 
 
+_DAILY_EXHAUSTED_MODELS: set[str] = set()
+
+
 class LLM:
     def __init__(self, settings: Settings | None = None, on_llm_call: Callable[[dict], None] | None = None,
                  provider: str | None = None):
@@ -101,12 +104,23 @@ class LLM:
         if not target_model:
             raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
-        # Candidate models failover chain: primary model first, then fallbacks
-        candidates = [target_model]
-        if self.provider.name == "openrouter" and self.s.openrouter_fallback_models:
-            for fb in self.s.openrouter_fallback_models:
-                if fb not in candidates:
-                    candidates.append(fb)
+        # Candidate models failover chain: primary model first, then configured fallbacks
+        all_candidates = [target_model]
+        if self.provider.name == "openrouter":
+            if self.s.openrouter_fallback_models:
+                for fb in self.s.openrouter_fallback_models:
+                    if fb not in all_candidates:
+                        all_candidates.append(fb)
+            # Ensure XingChen (Phala pool) is in failover chain as non-OpenRouter-pooled fallback
+            emergency_model = "xingchen-agi/xing4.0-29b-a4b:free"
+            if emergency_model not in all_candidates:
+                all_candidates.append(emergency_model)
+
+        # Prioritize candidates that have not exhausted their daily quota
+        candidates = [m for m in all_candidates if m not in _DAILY_EXHAUSTED_MODELS]
+        if not candidates:
+            # If all candidates were marked exhausted, retry all in case quota reset
+            candidates = list(all_candidates)
 
         last: Exception | None = None
         extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body)
@@ -114,12 +128,17 @@ class LLM:
         for current_model in candidates:
             extra_body: dict[str, Any] = dict(extra_body_base)
             if self.provider.name == "openrouter":
-                rem_fallbacks = [m for m in candidates if m != current_model]
-                if rem_fallbacks:
-                    # OpenRouter allows at most 3 models in the 'models' array
-                    extra_body["models"] = ([current_model] + rem_fallbacks)[:3]
+                # Only pass non-exhausted fallbacks to OpenRouter, max 2 fallbacks (1 current + 2 fallbacks = 3 models max)
+                valid_fallbacks = [m for m in candidates if m != current_model and m not in _DAILY_EXHAUSTED_MODELS][:2]
+                if valid_fallbacks:
+                    extra_body["models"] = [current_model] + valid_fallbacks
+                else:
+                    extra_body.pop("models", None)
 
-            for attempt in range(2):
+            # Up to 4 attempts for transient upstream pool rate limits (e.g. Phala on XingChen)
+            max_attempts = 4 if "xingchen" in current_model.lower() else 2
+
+            for attempt in range(max_attempts):
                 try:
                     with self._limiter:
                         t0 = time.time()
@@ -157,22 +176,49 @@ class LLM:
                                 "provider": self.provider.name,
                             })
 
-                        raw_content = r.choices[0].message.content or ""
+                        msg = r.choices[0].message if (r.choices and len(r.choices) > 0) else None
+                        raw_content = ""
+                        if msg:
+                            raw_content = getattr(msg, "content", "") or ""
+                            if not raw_content and hasattr(msg, "reasoning_content"):
+                                raw_content = getattr(msg, "reasoning_content") or ""
+
+                        if not raw_content and attempt < max_attempts - 1:
+                            time.sleep(1.0)
+                            continue
+
                         return strip_thinking(raw_content)
 
                 except Exception as e:
                     last = e
                     err_msg = str(e).lower()
 
-                    # If rate-limited or daily limit, try the next fallback model in candidates chain
-                    is_rate_limit = any(term in err_msg for term in [
-                        "rate limit", "429", "daily request limit", "free-model", "quota", "per-day"
+                    # Check for account-level daily limit (e.g. 50 free requests per day reached on OpenRouter)
+                    is_daily_limit = any(term in err_msg for term in [
+                        "free-models-per-day",
+                        "openrouter_free_tier_daily",
+                        "daily request limit",
+                        "daily limit",
+                        "per-day limit",
+                        "credit_balance_exhausted",
                     ])
-                    if is_rate_limit:
-                        # Try next candidate model
+                    if is_daily_limit:
+                        _DAILY_EXHAUSTED_MODELS.add(current_model)
+                        # Immediately break to next candidate model (do not sleep or retry this model)
                         break
 
-                    # Check for Retry-After
+                    # Check for upstream temporary shared pool limit (e.g. Phala shared pool for XingChen)
+                    is_upstream_busy = any(term in err_msg for term in [
+                        "temporarily rate-limited",
+                        "upstream_provider_shared_pool",
+                        "provider returned error",
+                    ])
+                    if is_upstream_busy and attempt < max_attempts - 1:
+                        wait_sec = 2.0 * (attempt + 1) + random.uniform(0.1, 0.5)
+                        time.sleep(wait_sec)
+                        continue
+
+                    # Retry-After header
                     wait_sec = 0.0
                     if hasattr(e, "response") and e.response is not None:
                         hdr = e.response.headers.get("retry-after") or e.response.headers.get("Retry-After")
@@ -183,9 +229,9 @@ class LLM:
                                 pass
 
                     if wait_sec > 0:
-                        time.sleep(min(wait_sec, 15.0))
-                    else:
-                        time.sleep(1.0 + random.uniform(0.1, 0.5))
+                        time.sleep(min(wait_sec, 10.0))
+                    elif attempt < max_attempts - 1:
+                        time.sleep(1.0 + random.uniform(0.1, 0.4))
 
         # If all candidates in chain failed:
         err_msg = str(last).lower() if last else ""
