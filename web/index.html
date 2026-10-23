@@ -693,7 +693,7 @@ h1.hero {
 .log-tag.verifier { color: #059669; }
 .log-tag.coverage { color: var(--warn); }
 .log-tag.synthesizer { color: #d97706; }
-.log-tag.mesh { color: #64748b; font-weight: 500; }
+.log-tag.mesh, .log-tag.openai { color: #64748b; font-weight: 500; }
 .log-tag.error { color: var(--bad); }
 
 @keyframes in { from { opacity: 0; } to { opacity: 1; } }
@@ -999,10 +999,16 @@ footer {
       </div>
 
       <div class="card-sub-strip">
-        <div class="seg" role="tablist" aria-label="Research Depth">
-          <button type="button" role="tab" id="depth-std" aria-selected="true" onclick="setDepth('std')">Standard (2 loops)</button>
-          <button type="button" role="tab" id="depth-deep" aria-selected="false" onclick="setDepth('deep')">Deep (4 loops)</button>
-          <button type="button" role="tab" id="depth-quick" aria-selected="false" onclick="setDepth('quick')">Quick (1 loop)</button>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div class="seg" role="tablist" aria-label="Research Depth">
+            <button type="button" role="tab" id="depth-std" aria-selected="true" onclick="setDepth('std')">Standard (2 loops)</button>
+            <button type="button" role="tab" id="depth-deep" aria-selected="false" onclick="setDepth('deep')">Deep (4 loops)</button>
+            <button type="button" role="tab" id="depth-quick" aria-selected="false" onclick="setDepth('quick')">Quick (1 loop)</button>
+          </div>
+          <div class="seg" role="tablist" aria-label="LLM Gateway" id="provider-seg">
+            <button type="button" role="tab" id="prov-mesh" aria-selected="true" onclick="setProvider('mesh')" title="Mesh API Gateway (api.meshapi.ai) — Hackathon Requirement">Mesh API</button>
+            <button type="button" role="tab" id="prov-openai" aria-selected="false" onclick="setProvider('openai')" title="Direct OpenAI API (Dev Toggle)">OpenAI Direct</button>
+          </div>
         </div>
         <div class="file-chips" id="file-chips"></div>
       </div>
@@ -1149,6 +1155,8 @@ let state = {
   t0: 0,
   uploadedFiles: [],
   depth: 'std',
+  provider: 'mesh',
+  statusData: null,
   activeLanes: {},
   claims: {},
   eventSource: null,
@@ -1156,19 +1164,41 @@ let state = {
   stepCount: 0
 };
 
+function updateModeBadge() {
+  const badge = $('#mode-badge');
+  const txt = $('#mode-text');
+  if (!state.statusData) return;
+  const s = state.statusData;
+  const isMesh = state.provider === 'mesh';
+  const hasKey = isMesh ? s.mesh : s.openai;
+  const provName = isMesh ? 'Mesh API' : 'OpenAI Direct';
+
+  if (hasKey) {
+    badge.className = 'mode-badge live';
+    txt.textContent = `● Live (${provName})`;
+  } else {
+    badge.className = 'mode-badge';
+    txt.textContent = `○ Sample mode (no ${isMesh ? 'Mesh' : 'OpenAI'} key)`;
+  }
+}
+
+function setProvider(p) {
+  state.provider = p;
+  $('#prov-mesh').setAttribute('aria-selected', p === 'mesh');
+  $('#prov-openai').setAttribute('aria-selected', p === 'openai');
+  updateModeBadge();
+}
+
 // Check backend status
 fetch('/api/status')
   .then(r => r.json())
   .then(s => {
+    state.statusData = s;
     state.live = s.live;
-    const badge = $('#mode-badge');
-    const txt = $('#mode-text');
-    if (s.live) {
-      badge.className = 'mode-badge live';
-      txt.textContent = '● Live (Mesh API)';
+    if (s.default_provider) {
+      setProvider(s.default_provider);
     } else {
-      badge.className = 'mode-badge';
-      txt.textContent = '○ Sample mode (no key)';
+      updateModeBadge();
     }
   })
   .catch(() => {
@@ -1386,6 +1416,7 @@ function startRun(query, isSample) {
   const fd = new FormData();
   fd.append('question', query);
   fd.append('sample', isSample ? '1' : '0');
+  fd.append('provider', state.provider || 'mesh');
   for (const f of state.uploadedFiles) {
     fd.append('files', f);
   }
@@ -1515,7 +1546,8 @@ function handleEvent(ev) {
   }
   else if (step === 'llm' && kind === 'call') {
     const tok = p.tokens ? `${p.tokens} tok` : '';
-    addLog('mesh', `${esc(p.tag || 'call')} / ${esc(p.model || 'llm')} / ${esc(tok)} (${p.ms}ms)`);
+    const prov = p.provider || 'mesh';
+    addLog(prov, `${esc(p.tag || 'call')} / ${esc(p.model || 'llm')} / ${esc(tok)} (${p.ms}ms)`);
   }
 }
 
@@ -1662,7 +1694,7 @@ function askFollowup() {
   fetch(`/api/runs/${encodeURIComponent(rid)}/followup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: q })
+    body: JSON.stringify({ question: q, provider: state.provider || 'mesh' })
   })
     .then(r => r.json())
     .then(data => {

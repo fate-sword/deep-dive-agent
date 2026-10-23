@@ -45,6 +45,14 @@ def test_create_run_and_stream_sample():
     assert "metrics" in events[-1]["report"]
 
 
+def test_create_run_with_provider():
+    client = TestClient(app)
+    r = client.post("/api/runs", data={"question": "Test EV battery market?", "sample": 1, "provider": "openai"})
+    assert r.status_code == 200
+    run_info = r.json()
+    assert run_info["provider"] == "openai"
+
+
 def test_file_upload_handling():
     client = TestClient(app)
     fake_txt = ("Battery pack recycling requires strict hydrometallurgical processing standards.\n" * 5).encode()

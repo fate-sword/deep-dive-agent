@@ -1,5 +1,4 @@
-"""Single entry point for every LLM call. All calls go through the Mesh API gateway
-(OpenAI-compatible), via the OpenAI SDK pointed at the Mesh base_url."""
+"""Single entry point for every LLM call. Supports Mesh API gateway and OpenAI direct."""
 import json
 import threading
 import time
@@ -49,11 +48,14 @@ def extract_json(text: str) -> Any:
 
 
 class LLM:
-    def __init__(self, settings: Settings | None = None, on_llm_call: Callable[[dict], None] | None = None):
+    def __init__(self, settings: Settings | None = None, on_llm_call: Callable[[dict], None] | None = None,
+                 provider: str | None = None):
         self.s = settings or get_settings()
-        if not self.s.api_key:
-            raise RuntimeError("MESH_API_KEY is not set. Copy .env.example to .env and add your key.")
-        self.client = OpenAI(base_url=self.s.base_url, api_key=self.s.api_key, timeout=90)
+        self.provider = (provider or self.s.llm_provider or "mesh").lower()
+        self.api_key, self.base_url, self.model, self.verifier_model = self.s.get_provider_config(self.provider)
+        if not self.api_key:
+            raise RuntimeError(f"API key for provider '{self.provider}' is not set in .env.")
+        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=90)
         self.calls = 0
         self.on_llm_call = on_llm_call
         self._limiter = threading.Semaphore(max(1, self.s.llm_concurrency))
@@ -61,7 +63,10 @@ class LLM:
     def chat(self, system: str, user: str, *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int = 2000, tag: str = "") -> str:
         last: Exception | None = None
-        target_model = model or self.s.model
+        target_model = model or self.model
+        if self.provider == "openai" and target_model.startswith("openai/"):
+            target_model = target_model.replace("openai/", "")
+
         for attempt in range(3):
             try:
                 with self._limiter:
@@ -90,12 +95,18 @@ class LLM:
                     if hasattr(r, "usage") and r.usage:
                         tokens = getattr(r.usage, "total_tokens", 0) or 0
                     if self.on_llm_call:
-                        self.on_llm_call({"tag": tag or "llm", "model": target_model, "ms": ms, "tokens": tokens})
+                        self.on_llm_call({
+                            "tag": tag or "llm",
+                            "model": target_model,
+                            "ms": ms,
+                            "tokens": tokens,
+                            "provider": self.provider
+                        })
                     return r.choices[0].message.content or ""
-            except Exception as e:  # network, rate limit, gateway errors
+            except Exception as e:
                 last = e
                 time.sleep(1.5 * (attempt + 1))
-        raise RuntimeError(f"LLM call failed [{tag}]: {last}")
+        raise RuntimeError(f"LLM call failed [{tag}] via {self.provider}: {last}")
 
     def json(self, system: str, user: str, *, model: str | None = None,
              tag: str = "", max_tokens: int = 2000) -> Any:

@@ -43,7 +43,7 @@ def sample_events():
     yield sse_format({"kind": "report", "report": SAMPLE.get("report", {}), "sample": True})
 
 
-def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, cancel_event: threading.Event | None = None):
+def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, cancel_event: threading.Event | None = None, provider: str | None = None):
     q: queue.Queue = queue.Queue()
     worker_started = threading.Event()
 
@@ -57,7 +57,8 @@ def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, c
                     question,
                     uploads=uploads,
                     settings=settings,
-                    on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p})
+                    on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p}),
+                    provider=provider
                 )
             q.put({"kind": "report", "report": rep})
         except Exception as ex:
@@ -95,8 +96,11 @@ def index():
 def status():
     return {
         "name": "Deeptrace",
-        "live": bool(settings.api_key),
+        "live": bool(settings.api_key or settings.openai_api_key),
+        "mesh": bool(settings.api_key),
+        "openai": bool(settings.openai_api_key),
         "tavily": bool(os.getenv("TAVILY_API_KEY")),
+        "default_provider": settings.llm_provider,
         "model": settings.model,
         "verifier_model": settings.verifier_model,
     }
@@ -107,10 +111,12 @@ async def create_run(
     request: Request,
     question: str = Form(""),
     sample: int = Form(0),
+    provider: str = Form(""),
     files: list[UploadFile] = File(default=[]),
 ):
     q = question.strip()[:400]
     client_ip = request.client.host if request.client else "unknown"
+    selected_provider = (provider or settings.llm_provider or "mesh").lower()
 
     # Check upload sizes and extensions
     uploads: list[tuple[str, bytes]] = []
@@ -127,7 +133,8 @@ async def create_run(
             raise HTTPException(400, "Uploaded documents exceed 10 MB total limit.")
         uploads.append((f.filename, content))
 
-    is_sample = bool(sample or not settings.api_key or not q)
+    has_key = bool(settings.openai_api_key if selected_provider == "openai" else settings.api_key)
+    is_sample = bool(sample or not has_key or not q)
     if not is_sample:
         with ip_lock:
             now = time.time()
@@ -141,12 +148,13 @@ async def create_run(
             "run_id": run_id,
             "question": q,
             "sample": is_sample,
+            "provider": selected_provider,
             "uploads": uploads,
             "created": time.time(),
             "cancel": threading.Event(),
         }
 
-    return {"run_id": run_id, "sample": is_sample, "question": q}
+    return {"run_id": run_id, "sample": is_sample, "question": q, "provider": selected_provider}
 
 
 @app.get("/api/runs/{run_id}/events")
@@ -171,7 +179,7 @@ async def stream_run_events(request: Request, run_id: str):
                         break
                     yield chunk
             else:
-                for chunk in live_events(run_data["question"], run_data.get("uploads"), cancel_event):
+                for chunk in live_events(run_data["question"], run_data.get("uploads"), cancel_event, provider=run_data.get("provider")):
                     if await request.is_disconnected():
                         if cancel_event:
                             cancel_event.set()
@@ -219,6 +227,7 @@ def run_legacy(request: Request, q: str = "", sample: int = 0):
 @app.post("/api/runs/{run_id}/followup")
 def followup_run(run_id: str, payload: dict):
     question = (payload.get("question") or "").strip()[:400]
+    provider = payload.get("provider")
     if not question:
         raise HTTPException(400, "Question is required")
 
@@ -231,7 +240,7 @@ def followup_run(run_id: str, payload: dict):
         }
 
     try:
-        res = answer_followup(run_id, question, settings=settings)
+        res = answer_followup(run_id, question, settings=settings, provider=provider)
         return res
     except Exception as e:
         raise HTTPException(500, f"Followup error: {str(e)}")

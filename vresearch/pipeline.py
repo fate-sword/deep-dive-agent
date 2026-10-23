@@ -292,10 +292,10 @@ def build_graph(ctx: Ctx):
 
 def run_research(question: str, uploads: list[tuple[str, bytes]] | None = None, *, progress=None,
                  settings: Settings | None = None, llm=None, search_fn=web_search, fetch_fn=fetch_page,
-                 on_event=None):
+                 on_event=None, provider: str | None = None):
     settings = settings or get_settings()
     store = RunStore(settings.db_path)
-    llm = llm or LLM(settings)
+    llm = llm or LLM(settings, provider=provider)
     run_id = store.new_run(question)
     ctx = Ctx(llm, store, settings, run_id, DocIndex(uploads) if uploads else None, search_fn, fetch_fn, progress, on_event)
     try:
@@ -308,11 +308,11 @@ def run_research(question: str, uploads: list[tuple[str, bytes]] | None = None, 
         raise
 
 
-def answer_followup(run_id: str, question: str, *, settings: Settings | None = None, llm=None) -> dict:
+def answer_followup(run_id: str, question: str, *, settings: Settings | None = None, llm=None, provider: str | None = None) -> dict:
     """Conversational follow-up that reuses the earlier research (verified claims only; no new web calls)."""
     settings = settings or get_settings()
     store = RunStore(settings.db_path)
-    llm = llm or LLM(settings)
+    llm = llm or LLM(settings, provider=provider)
     claims = [c for c in store.load_claims(run_id) if c["status"] in ("verified", "unverified")]
     if not claims:
         return {"answer": "The earlier run produced no usable claims to answer from.", "dropped": []}
