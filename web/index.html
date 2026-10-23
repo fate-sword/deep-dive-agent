@@ -1,121 +1,1678 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verified Research</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deeptrace — Don't just search. Trace the truth.</title>
+<meta name="description" content="Deeptrace is an AI research agent that decomposes questions, gathers real evidence, and adversarially verifies every claim against retrieved sources.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#fbfbf9;--ink:#111;--mut:#6b6b66;--line:#e7e6e1;--ok:#1f8a5b;--warn:#b7791f;--bad:#c2410c}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 Inter,system-ui,sans-serif;overflow-x:hidden}
-.tile{position:absolute;width:72px;height:72px;border-radius:6px;background:linear-gradient(135deg,#cfe4ff,#eaf5ff 55%,#bfe9dc)}
-.tile:nth-child(3n){filter:hue-rotate(40deg)}.tile:nth-child(3n+1){background:linear-gradient(160deg,#bfe9dc,#e5f3ff 60%,#c9dcff)}
-@media(max-width:1100px){.tile{display:none}}
-.wrap{position:relative;max-width:1040px;margin:0 auto;padding:0 20px}
-nav{display:flex;justify-content:space-between;align-items:center;padding:22px 0;font-weight:600}
-nav span{font:500 12px 'JetBrains Mono',monospace;color:var(--mut)}
-h1{font:400 clamp(40px,6.4vw,66px)/1.04 Newsreader,Georgia,serif;letter-spacing:-.025em;text-align:center;margin:56px 0 14px}
-.sub{text-align:center;color:var(--mut);font-size:17px;margin:0 auto 30px;max-width:560px}
-.card{background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 14px 44px rgba(20,20,20,.06);max-width:860px;margin:0 auto;overflow:hidden}
-.ask{display:flex;gap:10px;align-items:center;padding:14px 14px 14px 22px}
-.ask input{flex:1;border:0;outline:0;font:17px Inter,sans-serif;background:none;min-width:0}
-.go{width:38px;height:38px;border-radius:50%;border:0;background:var(--ink);color:#fff;font-size:18px;cursor:pointer}.go:disabled{opacity:.35}
-.ex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:16px 0 0;font:12px 'JetBrains Mono',monospace}
-.ex button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 12px;cursor:pointer;color:var(--mut);font:inherit}.ex button:hover{color:var(--ink);border-color:#cfcdc5}
-#run{display:none;border-top:1px solid var(--line)}
-.rail{display:flex;padding:18px 22px 10px;gap:6px}
-.st{flex:1;text-align:center;font:500 11px 'JetBrains Mono',monospace;color:#9a9a93;position:relative}
-.st i{display:grid;place-items:center;width:30px;height:30px;margin:0 auto 6px;border:1.5px solid var(--line);border-radius:50%;font-style:normal;background:#fff;position:relative;z-index:1;transition:.3s}
-.st:not(:last-child)::after{content:"";position:absolute;top:15px;left:calc(50% + 18px);right:calc(-50% + 18px);height:1.5px;background:var(--line)}
-.st.active{color:var(--ink)}.st.active i{border-color:var(--ink);animation:pulse 1.4s infinite}
-.st.done{color:var(--ok)}.st.done i{background:var(--ok);border-color:var(--ok);color:#fff}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(17,17,17,.18)}100%{box-shadow:0 0 0 9px rgba(17,17,17,0)}}
-#hint{text-align:center;font:12px 'JetBrains Mono',monospace;color:var(--warn);height:18px;opacity:0;transition:.4s}#hint.on{opacity:1}
-.cols{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;padding:6px 18px 18px}
-@media(max-width:760px){.cols{grid-template-columns:1fr}}
-.pane{max-height:310px;overflow:auto;padding-right:2px}
-.lab{font:500 11px 'JetBrains Mono',monospace;color:var(--mut);margin:0 0 6px;letter-spacing:.04em}
-.sq{font-size:13px;color:var(--mut);margin:3px 0}.sq b{font:500 11px 'JetBrains Mono',monospace;color:var(--ink);margin-right:6px}
-.cl{border:1px solid var(--line);border-left:3px solid #cfcdc5;border-radius:10px;padding:8px 11px;margin:7px 0;font-size:13.5px;animation:in .35s}
-@keyframes in{from{opacity:0;transform:translateY(5px)}}
-.cl.verified{border-left-color:var(--ok)}.cl.unverified{border-left-color:var(--warn)}.cl.rejected{border-left-color:var(--bad);background:#fffaf7}
-.cl.rejected .t{text-decoration:line-through;color:var(--mut)}
-.cl small{display:block;font:11px 'JetBrains Mono',monospace;margin-top:4px;color:var(--mut)}
-.chip{display:inline-block;font:11px 'JetBrains Mono',monospace;background:#f1efe9;border-radius:4px;padding:1px 6px;margin:4px 4px 0 0}
-.log{background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:12px/1.65 'JetBrains Mono',monospace;max-height:310px;overflow:auto;color:#44443f}
-.log div{animation:in .3s}.log b{color:var(--ink);font-weight:500}.log .bad{color:var(--bad)}.log .ok{color:var(--ok)}.log .warn{color:var(--warn)}.log .t0{color:#a8a8a0}
-#banner{display:none;text-align:center;font:12px 'JetBrains Mono',monospace;color:var(--warn);background:#fff8ea;padding:6px}
-#report{display:none;max-width:740px;margin:56px auto 80px}
-#report h2{font:400 34px/1.15 Newsreader,Georgia,serif;letter-spacing:-.02em;margin:0 0 6px}
-#report h3{font:500 18px Newsreader,Georgia,serif;margin:26px 0 4px}
-.met{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px}.met span{font:12px 'JetBrains Mono',monospace;border:1px solid var(--line);background:#fff;border-radius:99px;padding:3px 11px}
-sup{font:11px 'JetBrains Mono',monospace;color:var(--mut)}
-.src li{margin:3px 0;font-size:13px}.src a{color:inherit}
-.dl{display:flex;gap:10px;margin-top:20px}.dl a{background:var(--ink);color:#fff;text-decoration:none;border-radius:99px;padding:8px 18px;font-size:13px}.dl a.o{background:#fff;color:var(--ink);border:1px solid var(--line)}
-footer{text-align:center;color:var(--mut);font:12px 'JetBrains Mono',monospace;padding:0 0 40px}
-</style></head><body>
-<div aria-hidden="true"><div class="tile" style="left:0;top:40px"></div><div class="tile" style="left:86px;top:140px"></div><div class="tile" style="left:10px;top:330px"></div><div class="tile" style="left:110px;top:430px"></div>
-<div class="tile" style="right:0;top:60px"></div><div class="tile" style="right:84px;top:170px"></div><div class="tile" style="right:8px;top:360px"></div><div class="tile" style="right:104px;top:450px"></div></div>
-<div class="wrap">
-<nav><div>◧ Verified Research</div><span id="mode">checking…</span></nav>
-<h1>Research you can check.</h1>
-<p class="sub">Five agents plan, search, draft and fact-check every claim against its source before it reaches your report.</p>
-<div class="card">
- <form class="ask" id="f"><input id="q" placeholder="Ask a research question…" maxlength="400" autocomplete="off"><button class="go" id="go" title="Run">↑</button></form>
- <div id="banner">Sample run: illustrative data, not live research</div>
- <div id="run"><div class="rail" id="rail"></div><div id="hint"></div>
-  <div class="cols"><div><p class="lab">CLAIMS · EVIDENCE CHECK</p><div class="pane" id="claims"></div></div>
-  <div><p class="lab">RUN LOG</p><div class="log" id="log"></div></div></div></div>
+:root {
+  --bg: #fbfbf9;
+  --surface: #ffffff;
+  --surface-2: #f6f6f3;
+  --ink: #111111;
+  --ink-2: #44443f;
+  --muted: #6b6b66;
+  --faint: #9a9a93;
+  --line: #e7e6e1;
+  --line-strong: #cfcdc5;
+  --accent: #2563eb;
+  --accent-bg: #e8f0ff;
+  --ok: #1f8a5b;
+  --ok-bg: #eafaf1;
+  --warn: #b7791f;
+  --warn-bg: #fff8ea;
+  --bad: #c2410c;
+  --bad-bg: #fff5f2;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+  --shadow-card: 0 14px 44px rgba(20, 20, 20, .06);
+  --shadow-pop: 0 4px 14px rgba(20, 20, 20, .08);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --font-serif: "Newsreader", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
+}
+body { margin: 0; padding: 0; overflow-x: hidden; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Announcement Bar */
+.top-strip {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font: 500 13px var(--font-sans);
+  text-align: center;
+  padding: 8px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(37, 99, 235, 0.12);
+  position: relative;
+  z-index: 10;
+}
+.top-strip a { color: inherit; text-decoration: underline; font-weight: 600; }
+.top-strip button {
+  background: none; border: 0; color: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;
+}
+
+/* Background Side Tiles (Exa-Style) */
+.tile-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+.tile {
+  position: absolute;
+  border-radius: var(--r-sm);
+  background: linear-gradient(135deg, #cfe4ff, #eaf5ff 55%, #bfe9dc);
+  opacity: 0.85;
+}
+.tile.alt { background: linear-gradient(160deg, #bfe9dc, #e5f3ff 60%, #c9dcff); }
+.tile.grid {
+  background: #fff linear-gradient(#e6eefc 1px, transparent 1px) 0 0/16px 16px,
+              linear-gradient(90deg, #e6eefc 1px, transparent 1px) 0 0/16px 16px;
+  border: 1px solid #dce8fa;
+}
+
+.container { max-width: 1040px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 2; width: 100%; }
+
+/* Navigation */
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 0 16px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand-logo {
+  width: 26px; height: 26px;
+  background: var(--ink);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.brand-name { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; }
+.brand-tag {
+  font: 500 11px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+}
+.nav-links { display: flex; align-items: center; gap: 20px; }
+.nav-links a {
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+.nav-links a:hover { color: var(--ink); }
+.nav-actions { display: flex; align-items: center; gap: 10px; }
+.mode-badge {
+  font: 500 12px var(--font-mono);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mode-badge.live { color: var(--ok); border-color: rgba(31,138,91,0.3); background: var(--ok-bg); }
+.mode-badge.live .dot { background: var(--ok); }
+.mode-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 8px 16px;
+  font: 500 14px var(--font-sans);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s var(--ease);
+}
+.btn-dark { background: var(--ink); color: #fff; }
+.btn-dark:hover { background: #262624; }
+.btn-soft { background: #efeeea; color: var(--ink); border: 1px solid transparent; }
+.btn-soft:hover { background: #e5e3dd; }
+.btn-outline { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+.btn-outline:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.btn-pill { border-radius: var(--r-pill); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Hero Copy */
+.eyebrow {
+  font: 500 12px var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 48px;
+  margin-bottom: 12px;
+}
+h1.hero {
+  font: 400 clamp(38px, 6vw, 64px) / 1.05 var(--font-serif);
+  letter-spacing: -0.025em;
+  text-align: center;
+  margin: 0 0 16px;
+  color: var(--ink);
+}
+.hero-sub {
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.5;
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto 36px;
+}
+
+/* Hero Search Card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  max-width: 860px;
+  margin: 0 auto;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.card:focus-within { border-color: var(--line-strong); box-shadow: 0 18px 52px rgba(20,20,20,.09); }
+
+.card-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px 16px 24px;
+}
+.card-input-row input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: 16px/1.4 var(--font-sans);
+  color: var(--ink);
+  min-width: 0;
+}
+.card-input-row input::placeholder { color: var(--faint); }
+
+.input-actions { display: flex; align-items: center; gap: 8px; }
+.attach-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  width: 36px; height: 36px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.attach-btn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--line); }
+.attach-btn.has-files { color: var(--accent); background: var(--accent-bg); }
+
+.send-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 0;
+  background: #d9d8d3;
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.2s, transform 0.15s;
+}
+.send-btn.ready { background: var(--ink); }
+.send-btn.ready:hover { transform: scale(1.04); }
+.send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Card Settings & Controls Strip */
+.card-sub-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--line);
+  background: #fafaf8;
+}
+.seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 3px;
+  gap: 2px;
+}
+.seg button {
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font: 500 12px var(--font-sans);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.seg button[aria-selected="true"] {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.file-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.file-chip {
+  font: 500 11px var(--font-mono);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.file-chip button {
+  background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0; font-size: 13px; line-height: 1;
+}
+.file-chip button:hover { color: var(--bad); }
+
+/* Examples & Chips */
+.hero-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 18px auto 0;
+  max-width: 860px;
+}
+.hero-examples .ex-label {
+  font: 500 11px var(--font-mono);
+  color: var(--faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.hero-examples button {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 5px 14px;
+  font: 500 12.5px var(--font-sans);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.hero-examples button:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.hero-examples button.sample-cta {
+  color: var(--accent);
+  border-color: rgba(37, 99, 235, 0.25);
+  background: var(--accent-bg);
+  font-weight: 600;
+}
+.hero-examples button.sample-cta:hover { background: #dce9ff; }
+
+/* Banner */
+#banner {
+  display: none;
+  background: var(--warn-bg);
+  border-bottom: 1px solid rgba(183,121,31,0.2);
+  color: var(--warn);
+  padding: 8px 16px;
+  text-align: center;
+  font: 500 12px var(--font-mono);
+}
+
+/* ========================================================
+   LIVE PIPELINE CANVAS
+   ======================================================== */
+#pipeline-card {
+  display: none;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  transition: all 0.3s var(--ease);
+}
+
+/* Stage Rail */
+.stage-rail-wrap {
+  padding: 22px 24px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fafaf8;
+  position: relative;
+}
+.stage-rail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.rail-conn-track {
+  position: absolute;
+  top: 15px; left: 32px; right: 32px;
+  height: 2px;
+  background: var(--line);
+  z-index: 1;
+}
+.rail-conn-fill {
+  position: absolute;
+  top: 15px; left: 32px;
+  height: 2px;
+  background: var(--ok);
+  width: 0%;
+  transition: width 0.4s var(--ease);
+  z-index: 2;
+}
+.stage-node {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  text-align: center;
+}
+.stage-icon {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font: 600 12px var(--font-mono);
+  transition: all 0.3s var(--ease);
+}
+.stage-label {
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  transition: color 0.3s;
+}
+.stage-node.active .stage-icon {
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 0 0 0 4px rgba(17,17,17,0.1);
+  animation: node-pulse 1.8s infinite;
+}
+.stage-node.active .stage-label { color: var(--ink); }
+.stage-node.done .stage-icon {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.stage-node.done .stage-label { color: var(--ok); }
+.stage-node.weak .stage-icon {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+@keyframes node-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(17,17,17,0.18); }
+  70% { box-shadow: 0 0 0 8px rgba(17,17,17,0); }
+  100% { box-shadow: 0 0 0 0 rgba(17,17,17,0); }
+}
+
+/* Loop-back visual indicator */
+.loop-notice-bar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--warn-bg);
+  border: 1px dashed rgba(183, 121, 31, 0.4);
+  border-radius: var(--r-sm);
+  padding: 6px 14px;
+  margin: 12px auto 0;
+  max-width: 680px;
+  font: 500 12px var(--font-mono);
+  color: var(--warn);
+  animation: in 0.3s;
+}
+.loop-notice-bar svg { animation: rotate 2s linear infinite; }
+@keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+
+/* Pipeline Body: 2 columns */
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 16px;
+  padding: 20px 24px 24px;
+  min-height: 380px;
+}
+@media (max-width: 820px) {
+  .pipeline-grid { grid-template-columns: 1fr; }
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.pane-title {
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.counter-pill {
+  font: 500 11px var(--font-mono);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  color: var(--ink-2);
+}
+
+/* Sub-question Lanes & Claims Canvas */
+.canvas-scroll {
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.subq-lane {
+  background: #fafaf8;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  animation: in 0.35s var(--ease);
+}
+.subq-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.subq-id {
+  font: 700 11px var(--font-mono);
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.subq-text { font-size: 13.5px; font-weight: 600; color: var(--ink); flex: 1; }
+.subq-status {
+  font: 500 11px var(--font-mono);
+  color: var(--muted);
+}
+.subq-query-line {
+  font: 12px var(--font-mono);
+  color: var(--ink-2);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.provider-badge {
+  font: 600 10px var(--font-mono);
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: var(--accent);
+  border: 1px solid rgba(37,99,235,0.15);
+}
+.provider-badge.tavily { background: #eef2ff; color: #3b82f6; }
+.provider-badge.ddg { background: #f0fdf4; color: #16a34a; }
+.provider-badge.wikipedia { background: #f4f4f5; color: #52525b; }
+
+/* Claim Cards */
+.claims-list { display: flex; flex-direction: column; gap: 8px; }
+.claim-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 3.5px solid #d4d2cb;
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 13px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s var(--ease);
+  animation: card-in 0.3s var(--ease);
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.claim-card.verified {
+  border-left-color: var(--ok);
+  background: #fff;
+}
+.claim-card.unverified {
+  border-left-color: var(--warn);
+  background: #fffbf5;
+}
+.claim-card.rejected {
+  border-left-color: var(--bad);
+  background: #fff8f6;
+  opacity: 0.65;
+}
+.claim-card.rejected .claim-body {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.claim-card.scanning::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(37,99,235,0.1), transparent);
+  animation: scan-pass 0.6s var(--ease);
+}
+@keyframes scan-pass {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+.claim-cid {
+  font: 700 11px var(--font-mono);
+  color: var(--ink);
+  margin-right: 6px;
+}
+.claim-body { color: var(--ink); }
+.claim-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  font: 11px var(--font-mono);
+}
+.claim-verdict {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.claim-verdict.verified { color: var(--ok); font-weight: 600; }
+.claim-verdict.unverified { color: var(--warn); font-weight: 500; }
+.claim-verdict.rejected { color: var(--bad); font-weight: 500; }
+.claim-sources { display: flex; gap: 4px; flex-wrap: wrap; }
+.source-chip {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font: 10.5px var(--font-mono);
+  color: var(--muted);
+}
+
+/* Conflict Link */
+.conflict-badge {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #be123c;
+  font: 600 11px var(--font-mono);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* Run Log */
+.log-box {
+  background: #fafaf8;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px;
+  font: 12px/1.65 var(--font-mono);
+  max-height: 480px;
+  overflow-y: auto;
+  color: #44443f;
+}
+.log-row {
+  margin-bottom: 3px;
+  word-break: break-word;
+  animation: in 0.2s;
+}
+.log-ts { color: var(--faint); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.log-tag { font-weight: 600; text-transform: uppercase; margin-right: 4px; }
+.log-tag.planner { color: #8b5cf6; }
+.log-tag.researcher { color: var(--accent); }
+.log-tag.drafter { color: #0284c7; }
+.log-tag.verifier { color: #059669; }
+.log-tag.coverage { color: var(--warn); }
+.log-tag.synthesizer { color: #d97706; }
+.log-tag.mesh { color: #64748b; font-weight: 500; }
+.log-tag.error { color: var(--bad); }
+
+@keyframes in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ========================================================
+   REPORT SECTION
+   ======================================================== */
+#report-section {
+  display: none;
+  max-width: 820px;
+  margin: 52px auto 80px;
+  animation: in 0.4s var(--ease);
+}
+.report-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 20px;
+  margin-bottom: 28px;
+}
+.report-eyebrow {
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.report-title {
+  font: 400 clamp(28px, 4vw, 42px) / 1.15 var(--font-serif);
+  letter-spacing: -0.02em;
+  margin: 0 0 16px;
+  color: var(--ink);
+}
+
+.report-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.metric-pill {
+  font: 500 12px var(--font-mono);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.metric-pill.highlight {
+  background: var(--ok-bg);
+  border-color: rgba(31,138,91,0.25);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.report-content {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.report-content h2 {
+  font: 500 24px/1.25 var(--font-serif);
+  margin: 32px 0 10px;
+  color: var(--ink);
+}
+.report-content h3 {
+  font: 500 20px/1.3 var(--font-serif);
+  margin: 28px 0 8px;
+  color: var(--ink);
+}
+.report-content p { margin: 0 0 14px; }
+.citation {
+  font: 600 11px var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: 0 1px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.citation:hover { text-decoration: underline; }
+.thin-notice {
+  font: italic 13px var(--font-sans);
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-left: 3px solid var(--warn);
+  padding: 6px 12px;
+  margin: 8px 0 14px;
+  border-radius: 0 6px 6px 0;
+}
+
+/* Contradictions Block */
+.contradictions-block {
+  background: #fffbf5;
+  border: 1px solid #fed7aa;
+  border-radius: var(--r-md);
+  padding: 16px 20px;
+  margin: 24px 0;
+}
+.contradictions-block h3 {
+  color: #c2410c;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.contra-item {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed #fed7aa;
+}
+.contra-item:last-child { border: 0; margin-bottom: 0; padding-bottom: 0; }
+.contra-exp { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.contra-claim { font-size: 13.5px; color: var(--ink-2); margin-left: 12px; }
+
+/* Sources Bibliography */
+.sources-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.source-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-size: 13.5px;
+}
+.source-title { font-weight: 600; color: var(--ink); text-decoration: none; }
+.source-title:hover { text-decoration: underline; }
+.tier-tag {
+  font: 600 11px var(--font-mono);
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  text-transform: uppercase;
+}
+.tier-tag.primary { background: #e0e7ff; color: #4338ca; }
+.tier-tag.reputable { background: #f0fdf4; color: #15803d; }
+.tier-tag.general { background: #f3f4f6; color: #4b5563; }
+.tier-tag.low { background: #fef2f2; color: #b91c1c; }
+
+/* Exports */
+.downloads-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* Decision Trail Accordion */
+.decision-trail {
+  margin-top: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: #fff;
+  overflow: hidden;
+}
+.trail-toggle {
+  width: 100%;
+  padding: 16px 20px;
+  background: var(--surface-2);
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 600 14px var(--font-sans);
+  color: var(--ink);
+}
+.trail-body {
+  display: none;
+  padding: 20px;
+  border-top: 1px solid var(--line);
+  font: 13px/1.6 var(--font-mono);
+  background: #fafaf8;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.trail-body.open { display: block; }
+.trail-group { margin-bottom: 16px; }
+.trail-group-title { font-weight: 700; color: var(--ink); margin-bottom: 6px; text-transform: uppercase; }
+
+/* Follow-up Chat */
+.followup-card {
+  margin-top: 40px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 20px 24px;
+  box-shadow: var(--shadow-pop);
+}
+.followup-card h3 { font: 500 18px var(--font-serif); margin: 0 0 4px; }
+.followup-card p { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; }
+.followup-input-row { display: flex; gap: 8px; }
+.followup-input-row input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  font: 14px var(--font-sans);
+  outline: 0;
+}
+.followup-input-row input:focus { border-color: var(--ink); }
+.followup-res {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  display: none;
+}
+
+/* Footer */
+footer {
+  margin-top: auto;
+  padding: 32px 0 40px;
+  text-align: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font: 12px var(--font-mono);
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+@media (max-width: 1100px) { .tile { display: none; } }
+@media (max-width: 760px) {
+  h1.hero { font-size: 36px; }
+  .hero-sub { font-size: 16px; }
+  .card-sub-strip { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+
+<!-- Top Announcement Strip -->
+<div class="top-strip" id="top-strip">
+  <span>Built for the <strong>Mesh API Hackathon</strong> — Multi-agent research with adversarial fact-checking</span>
+  <button type="button" onclick="document.getElementById('top-strip').style.display='none'" aria-label="Close announcement">×</button>
 </div>
-<div class="ex" id="ex"></div>
-<div id="report"></div>
-<footer>Every LLM call is routed through Mesh API</footer>
+
+<!-- Decorative Background Tiles (Exa Aesthetics) -->
+<div class="tile-layer" aria-hidden="true">
+  <div class="tile" style="left:20px; top:120px; width:68px; height:68px;"></div>
+  <div class="tile grid" style="left:80px; top:210px; width:80px; height:80px;"></div>
+  <div class="tile alt" style="left:12px; top:360px; width:72px; height:72px;"></div>
+  <div class="tile" style="left:90px; top:490px; width:60px; height:60px;"></div>
+  <div class="tile grid" style="right:30px; top:130px; width:74px; height:74px;"></div>
+  <div class="tile alt" style="right:95px; top:230px; width:84px; height:84px;"></div>
+  <div class="tile" style="right:15px; top:390px; width:64px; height:64px;"></div>
+  <div class="tile grid" style="right:85px; top:510px; width:72px; height:72px;"></div>
 </div>
+
+<div class="container">
+  <!-- Nav -->
+  <nav>
+    <a href="/" class="brand">
+      <div class="brand-logo">D</div>
+      <span class="brand-name">Deeptrace</span>
+      <span class="brand-tag">AI Research Agent</span>
+    </a>
+    <div class="nav-links">
+      <a href="#how-it-works">How it works</a>
+      <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <div class="nav-actions">
+      <div class="mode-badge" id="mode-badge"><span class="dot"></span><span id="mode-text">Checking...</span></div>
+      <button type="button" class="btn btn-dark btn-pill" id="nav-new-btn" onclick="resetForm()">New Research</button>
+    </div>
+  </nav>
+
+  <!-- Hero Header -->
+  <div class="eyebrow">FROM CURIOSITY TO CLARITY</div>
+  <h1 class="hero">Don't just search. Trace the truth.</h1>
+  <p class="hero-sub">An AI research agent that digs deeper, connects evidence, and turns complex questions into clear, source-backed insights.</p>
+
+  <!-- Main Search Card (The Hero) -->
+  <div class="card" id="search-card">
+    <form id="research-form" onsubmit="event.preventDefault(); submitQuery();">
+      <div class="card-input-row">
+        <input type="text" id="query-input" placeholder="Ask a research question… (e.g. EV battery market risks in 2026)" maxlength="400" autocomplete="off" autofocus>
+        <div class="input-actions">
+          <input type="file" id="file-input" multiple accept=".pdf,.txt,.md" style="display:none" onchange="handleFiles(this.files)">
+          <button type="button" class="attach-btn" id="attach-btn" title="Attach documents (PDF, TXT, MD)" onclick="document.getElementById('file-input').click()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <button type="submit" class="send-btn" id="send-btn" title="Start Research" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card-sub-strip">
+        <div class="seg" role="tablist" aria-label="Research Depth">
+          <button type="button" role="tab" id="depth-std" aria-selected="true" onclick="setDepth('std')">Standard (2 loops)</button>
+          <button type="button" role="tab" id="depth-deep" aria-selected="false" onclick="setDepth('deep')">Deep (4 loops)</button>
+          <button type="button" role="tab" id="depth-quick" aria-selected="false" onclick="setDepth('quick')">Quick (1 loop)</button>
+        </div>
+        <div class="file-chips" id="file-chips"></div>
+      </div>
+    </form>
+
+    <!-- Sample Banner -->
+    <div id="banner">Sample run: illustrative data, not live research</div>
+
+    <!-- Live Pipeline Screen -->
+    <div id="pipeline-card">
+      <div class="stage-rail-wrap">
+        <div class="stage-rail" id="stage-rail">
+          <div class="rail-conn-track"></div>
+          <div class="rail-conn-fill" id="rail-fill"></div>
+          <div class="stage-node" id="sn-0"><div class="stage-icon">1</div><div class="stage-label">Planner</div></div>
+          <div class="stage-node" id="sn-1"><div class="stage-icon">2</div><div class="stage-label">Researcher</div></div>
+          <div class="stage-node" id="sn-2"><div class="stage-icon">3</div><div class="stage-label">Drafter</div></div>
+          <div class="stage-node" id="sn-3"><div class="stage-icon">4</div><div class="stage-label">Verifier</div></div>
+          <div class="stage-node" id="sn-4"><div class="stage-icon">5</div><div class="stage-label">Synthesizer</div></div>
+        </div>
+
+        <div class="loop-notice-bar" id="loop-notice">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+          <span id="loop-text">Not enough proof, searching again</span>
+        </div>
+      </div>
+
+      <div class="pipeline-grid">
+        <!-- Sub-questions & Claims Canvas -->
+        <div class="canvas-col">
+          <div class="pane-header">
+            <span class="pane-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+              EVIDENCE & CLAIMS VERIFICATION
+            </span>
+            <span class="counter-pill" id="verified-counter">0 Verified</span>
+          </div>
+          <div class="canvas-scroll" id="canvas-scroll">
+            <div id="subq-lanes"></div>
+          </div>
+        </div>
+
+        <!-- Live Run Log & Mesh Telemetry -->
+        <div class="log-col">
+          <div class="pane-header">
+            <span class="pane-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              RUN LOG · MESH USAGE
+            </span>
+            <span class="counter-pill" id="log-count">0 steps</span>
+          </div>
+          <div class="log-box" id="log-box" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Example Question Pills -->
+  <div class="hero-examples" id="hero-examples">
+    <span class="ex-label">Try an inquiry:</span>
+    <button type="button" onclick="pickExample(0)">EV battery market risks 2026</button>
+    <button type="button" onclick="pickExample(1)">Solid-state battery commercialization</button>
+    <button type="button" onclick="pickExample(2)">Barriers to heat pump adoption</button>
+    <button type="button" class="sample-cta" onclick="startSampleRun()">▶ See a sample run</button>
+  </div>
+
+  <!-- Structured Report Section -->
+  <section id="report-section">
+    <div class="report-header">
+      <div class="report-eyebrow">FINAL VERIFIED REPORT</div>
+      <h2 class="report-title" id="report-title"></h2>
+      <div class="report-metrics" id="report-metrics"></div>
+    </div>
+
+    <div class="report-content" id="report-body"></div>
+
+    <!-- Contradictions Block -->
+    <div class="contradictions-block" id="contra-block" style="display:none">
+      <h3>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Where Sources Disagree
+      </h3>
+      <div id="contra-items"></div>
+    </div>
+
+    <!-- Sources Section -->
+    <div style="margin-top: 36px;">
+      <h3 style="font: 500 22px var(--font-serif); margin-bottom: 12px;">Cited Sources</h3>
+      <div class="sources-list" id="sources-list"></div>
+    </div>
+
+    <!-- Downloads Toolbar -->
+    <div class="downloads-bar">
+      <a class="btn btn-dark btn-pill" id="dl-pdf" href="#" download>Download PDF</a>
+      <a class="btn btn-outline btn-pill" id="dl-html" href="#" target="_blank">Shareable HTML</a>
+      <a class="btn btn-outline btn-pill" id="dl-md" href="#" download>Markdown Export</a>
+    </div>
+
+    <!-- Decision Trail Accordion -->
+    <div class="decision-trail">
+      <button type="button" class="trail-toggle" onclick="toggleTrail()">
+        <span>Auditable Decision Trail (Searches, Quotes, Reasonings)</span>
+        <span id="trail-icon">▼</span>
+      </button>
+      <div class="trail-body" id="trail-body"></div>
+    </div>
+
+    <!-- Follow-up QA -->
+    <div class="followup-card">
+      <h3>Ask a follow-up question</h3>
+      <p>Answers are grounded strictly in this run's verified claims. No new web searches are made.</p>
+      <div class="followup-input-row">
+        <input type="text" id="followup-input" placeholder="e.g. Which specific regulations affect recyclers?" onkeydown="if(event.key==='Enter')askFollowup()">
+        <button type="button" class="btn btn-dark" onclick="askFollowup()">Ask</button>
+      </div>
+      <div class="followup-res" id="followup-res"></div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    Every LLM call is routed through <strong>Mesh API</strong> · Built with LangGraph, Tavily & FastAPI · No invented claims
+  </div>
+</footer>
+
 <script>
-const $=s=>document.querySelector(s),N=['Planner','Researcher','Drafter','Verifier','Synthesizer'];
-const MAP={plan:0,research:1,draft:2,verify:3,coverage:3,contradict:4,synthesize:4};
-const EXAMPLES=['What are the main risks of investing in the EV battery market in 2026?','What is the state of solid-state battery commercialization?','What are the barriers to heat pump adoption in Europe?'];
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let es,cards={},t0=0,finished=true,live=false;
-$('#rail').innerHTML=N.map((n,i)=>`<div class="st" id="s${i}"><i>${i+1}</i>${n.toUpperCase()}</div>`).join('');
-$('#ex').innerHTML=EXAMPLES.map(x=>`<button type="button">${esc(x.length>46?x.slice(0,44)+'…':x)}</button>`).join('')+'<button type="button" id="smp">▶ see a sample run</button>';
-document.querySelectorAll('#ex button').forEach((b,i)=>b.onclick=()=>i<EXAMPLES.length?(($('#q').value=EXAMPLES[i]),start(EXAMPLES[i],0)):start('',1));
-fetch('/api/status').then(r=>r.json()).then(s=>{live=s.live;$('#mode').textContent=live?'● live':'○ sample mode (no API key)'}).catch(()=>{$('#mode').textContent='○ offline'});
-$('#f').onsubmit=e=>{e.preventDefault();start($('#q').value.trim(),0)};
-function stage(i){for(let j=0;j<5;j++){const e=$('#s'+j);e.className='st'+(j<i?' done':j==i?' active':'');if(j<i)e.firstChild.textContent='✓'}}
-function log(html,cls=''){const L=$('#log'),d=document.createElement('div');d.innerHTML=`<span class="t0">[${((Date.now()-t0)/1000).toFixed(1).padStart(4,'0')}]</span> ${html}`;if(cls)d.className=cls;L.appendChild(d);L.scrollTop=1e9}
-function chips(a){return (a||[]).map(s=>`<span class="chip">${esc(s)}</span>`).join('')}
-function card(c){if(cards[c.cid])return;const d=document.createElement('div');d.className='cl';d.innerHTML=`<b>${esc(c.cid)}</b> <span class="t">${esc(c.text)}</span><br>${chips(c.sources)}<small></small>`;$('#claims').appendChild(d);cards[c.cid]=d;$('#claims').scrollTop=1e9}
-function start(q,sample){
- if(!sample&&!q)return;if(es)es.close();finished=false;cards={};t0=Date.now();
- $('#run').style.display='block';$('#claims').innerHTML='';$('#log').innerHTML='';$('#report').style.display='none';
- $('#banner').style.display=(sample||!live)?'block':'none';$('#go').disabled=true;stage(0);
- es=new EventSource('/api/run?q='+encodeURIComponent(q)+(sample?'&sample=1':''));
- es.onmessage=e=>handle(JSON.parse(e.data));
- es.onerror=()=>{es.close();if(!finished){finished=true;$('#go').disabled=false;log('connection lost','bad')}};
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const EXAMPLES = [
+  'What are the main risks of investing in the EV battery market in 2026?',
+  'What is the state of solid-state battery commercialization?',
+  'What are the barriers to heat pump adoption in Europe?'
+];
+
+let state = {
+  live: false,
+  running: false,
+  runId: null,
+  t0: 0,
+  uploadedFiles: [],
+  depth: 'std',
+  activeLanes: {},
+  claims: {},
+  eventSource: null,
+  counts: { verified: 0, unverified: 0, rejected: 0 },
+  stepCount: 0
+};
+
+// Check backend status
+fetch('/api/status')
+  .then(r => r.json())
+  .then(s => {
+    state.live = s.live;
+    const badge = $('#mode-badge');
+    const txt = $('#mode-text');
+    if (s.live) {
+      badge.className = 'mode-badge live';
+      txt.textContent = '● Live (Mesh API)';
+    } else {
+      badge.className = 'mode-badge';
+      txt.textContent = '○ Sample mode (no key)';
+    }
+  })
+  .catch(() => {
+    $('#mode-text').textContent = '○ Offline';
+  });
+
+// Input handling
+const qInput = $('#query-input');
+const sendBtn = $('#send-btn');
+qInput.addEventListener('input', () => {
+  const ready = qInput.value.trim().length > 0;
+  sendBtn.classList.toggle('ready', ready);
+  sendBtn.disabled = !ready || state.running;
+});
+
+function setDepth(d) {
+  state.depth = d;
+  $('#depth-std').setAttribute('aria-selected', d === 'std');
+  $('#depth-deep').setAttribute('aria-selected', d === 'deep');
+  $('#depth-quick').setAttribute('aria-selected', d === 'quick');
 }
-function handle(ev){
- const{step,kind,payload:p={}}=ev;
- if(kind==='report'){finished=true;es.close();$('#go').disabled=false;for(let j=0;j<5;j++){const e=$('#s'+j);e.className='st done';e.firstChild.textContent='✓'}log('<b>synthesizer</b> report ready','ok');$('#hint').className='';return showReport(ev.report)}
- if(kind==='error'){finished=true;es.close();$('#go').disabled=false;return log('error: '+esc(ev.message),'bad')}
- if(kind==='loop_back'){stage(1);$('#hint').textContent='not enough proof → searching again';$('#hint').className='on';return log(`<b>coverage</b> thin: ${esc((p.weak||[]).join(', '))} → searching again`,'warn')}
- if(kind==='done'){$('#hint').className=''}
- if(step in MAP&&kind!=='done')stage(MAP[step]);
- if(kind==='subquestions'){$('#claims').insertAdjacentHTML('afterbegin',p.sub_questions.map(s=>`<div class="sq"><b>${esc(s.id)}</b>${esc(s.question)}</div>`).join(''));log(`<b>planner</b> ${p.sub_questions.length} sub-questions`)}
- else if(kind==='search')log(`<b>researcher</b> ${esc(p.subq)} “${esc(p.query)}” → ${p.results} results`);
- else if(kind==='evidence')log(`<b>researcher</b> ${esc(p.subq)} ${p.passages} passages stored`);
- else if(kind==='no_evidence')log(`<b>drafter</b> ${esc(p.subq)} no evidence`,'warn');
- else if(kind==='claims'){(p.items||[]).forEach(card);log(`<b>drafter</b> ${esc(p.subq)} ${(p.items||[]).length} new claims`)}
- else if(kind==='verdict'){const d=cards[p.cid];if(d){d.className='cl '+(p.status==='verified'?'verified':p.status==='rejected'?'rejected':'unverified');
-   d.querySelector('small').textContent=(p.status==='verified'?'✓ verified':p.status==='rejected'?'✕ rejected':'? unverified')+(p.reason?' · '+p.reason:'')}
-   log(`<b>verifier</b> ${esc(p.cid)} ${esc(p.status)}${p.status==='verified'?'':' — '+esc(p.reason)}`,p.status==='verified'?'ok':p.status==='rejected'?'bad':'warn')}
- else if(kind==='found')log(`<b>contradictions</b> ${(p.contradictions||[]).length} found`);
+
+function pickExample(i) {
+  qInput.value = EXAMPLES[i];
+  qInput.dispatchEvent(new Event('input'));
+  submitQuery();
 }
-function showReport(r){
- const m=r.metrics,cite=t=>esc(t).replace(/\[(\d+)\]/g,'<sup>[$1]</sup>');
- $('#report').innerHTML=`<h2>${esc(r.question)}</h2><div class="met"><span>${Math.round(m.groundedness*100)}% grounded</span><span>${m.claims_verified}/${m.claims_total} claims verified</span><span>${m.claims_rejected} rejected</span><span>${m.loops} loop-back${m.loops==1?'':'s'}</span><span>${m.contradictions} contradictions</span></div>
- <p>${cite(r.summary)}</p>${r.sections.map(s=>`<h3>${esc(s.question)}</h3><p>${cite(s.text)||'<em>No verified evidence found.</em>'}${s.thin?' <em>(evidence was limited)</em>':''}</p>`).join('')}
- ${r.contradictions.length?'<h3>Where sources disagree</h3>'+r.contradictions.map(x=>`<p>${esc(x.explanation)}</p>`).join(''):''}
- <h3>Sources</h3><ol class="src">${r.sources.map(b=>`<li><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a> <span class="chip">${esc(b.tier)}</span></li>`).join('')}</ol>
- <div class="dl"><a href="/api/report/${r.run_id}.pdf">Download PDF</a><a class="o" href="/api/report/${r.run_id}.html" target="_blank">Shareable page</a><a class="o" href="/api/report/${r.run_id}.md">Markdown</a></div>`;
- $('#report').style.display='block';$('#report').scrollIntoView({behavior:'smooth',block:'start'});
+
+function handleFiles(fileList) {
+  for (const f of fileList) {
+    if (!state.uploadedFiles.some(existing => existing.name === f.name)) {
+      state.uploadedFiles.push(f);
+    }
+  }
+  renderFileChips();
 }
-</script></body></html>
+
+function renderFileChips() {
+  const container = $('#file-chips');
+  container.innerHTML = state.uploadedFiles.map((f, i) => `
+    <span class="file-chip">
+      <span>📄 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)</span>
+      <button type="button" onclick="removeFile(${i})" title="Remove">✕</button>
+    </span>
+  `).join('');
+  $('#attach-btn').classList.toggle('has-files', state.uploadedFiles.length > 0);
+}
+
+function removeFile(i) {
+  state.uploadedFiles.splice(i, 1);
+  renderFileChips();
+}
+
+function resetForm() {
+  if (state.eventSource) state.eventSource.close();
+  state.running = false;
+  qInput.disabled = false;
+  qInput.value = '';
+  qInput.dispatchEvent(new Event('input'));
+  state.uploadedFiles = [];
+  renderFileChips();
+  $('#pipeline-card').style.display = 'none';
+  $('#report-section').style.display = 'none';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function startSampleRun() {
+  qInput.value = EXAMPLES[0];
+  qInput.dispatchEvent(new Event('input'));
+  startRun(EXAMPLES[0], true);
+}
+
+function submitQuery() {
+  const q = qInput.value.trim();
+  if (!q || state.running) return;
+  startRun(q, !state.live);
+}
+
+// Stage rail
+const STAGES = ['Planner', 'Researcher', 'Drafter', 'Verifier', 'Synthesizer'];
+const STAGE_MAP = { plan: 0, research: 1, draft: 2, verify: 3, coverage: 3, contradict: 4, synthesize: 4 };
+
+function setStage(idx, isDone = false) {
+  const fill = $('#rail-fill');
+  fill.style.width = (idx * 25) + '%';
+
+  for (let i = 0; i < 5; i++) {
+    const node = $('#sn-' + i);
+    const icon = node.querySelector('.stage-icon');
+    if (i < idx || (i === idx && isDone)) {
+      node.className = 'stage-node done';
+      icon.textContent = '✓';
+    } else if (i === idx) {
+      node.className = 'stage-node active';
+      icon.textContent = String(i + 1);
+    } else {
+      node.className = 'stage-node';
+      icon.textContent = String(i + 1);
+    }
+  }
+}
+
+// Log utility
+function addLog(tag, msg, cls = '') {
+  state.stepCount++;
+  $('#log-count').textContent = state.stepCount + ' steps';
+  const box = $('#log-box');
+  const d = document.createElement('div');
+  d.className = 'log-row';
+  const sec = ((Date.now() - state.t0) / 1000).toFixed(1).padStart(4, '0');
+  d.innerHTML = `<span class="log-ts">[${sec}s]</span><span class="log-tag ${tag.toLowerCase()}">${esc(tag)}</span> ${msg}`;
+  if (cls) d.classList.add(cls);
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+// Ensure sub-question lane
+function getOrCreateLane(subqId, title = '') {
+  if (state.activeLanes[subqId]) return state.activeLanes[subqId];
+  const container = $('#subq-lanes');
+  const lane = document.createElement('div');
+  lane.className = 'subq-lane';
+  lane.id = 'lane-' + subqId;
+  lane.innerHTML = `
+    <div class="subq-head">
+      <span class="subq-id">${esc(subqId)}</span>
+      <span class="subq-text">${esc(title || subqId)}</span>
+      <span class="subq-status" id="status-${esc(subqId)}">Ready</span>
+    </div>
+    <div class="subq-query-line" id="qline-${esc(subqId)}" style="display:none">
+      <span id="qtext-${esc(subqId)}"></span>
+      <span class="provider-badge" id="pbadge-${esc(subqId)}">web</span>
+    </div>
+    <div class="claims-list" id="claims-${esc(subqId)}"></div>
+  `;
+  container.appendChild(lane);
+  state.activeLanes[subqId] = lane;
+  return lane;
+}
+
+// Add claim card
+function renderClaim(c, subqId) {
+  if (state.claims[c.cid]) return;
+  const lane = getOrCreateLane(subqId);
+  const list = lane.querySelector('#claims-' + subqId);
+
+  const card = document.createElement('div');
+  card.className = 'claim-card';
+  card.id = 'card-' + c.cid;
+  const srcHtml = (c.sources || []).map(s => `<span class="source-chip">${esc(s)}</span>`).join('');
+
+  card.innerHTML = `
+    <div><span class="claim-cid">${esc(c.cid)}</span><span class="claim-body">${esc(c.text)}</span></div>
+    <div class="claim-meta">
+      <span class="claim-verdict" id="verdict-${esc(c.cid)}">⋯ pending verification</span>
+      <div class="claim-sources">${srcHtml}</div>
+    </div>
+  `;
+  list.appendChild(card);
+  state.claims[c.cid] = card;
+  $('#canvas-scroll').scrollTop = $('#canvas-scroll').scrollHeight;
+}
+
+// Update claim verdict
+function applyVerdict(cid, status, reason) {
+  const card = state.claims[cid];
+  if (!card) return;
+  card.classList.add('scanning');
+  setTimeout(() => {
+    card.classList.remove('scanning');
+    card.className = 'claim-card ' + status;
+    const vSpan = card.querySelector('#verdict-' + cid);
+    if (status === 'verified') {
+      vSpan.className = 'claim-verdict verified';
+      vSpan.innerHTML = `✓ Verified`;
+      state.counts.verified++;
+    } else if (status === 'unverified') {
+      vSpan.className = 'claim-verdict unverified';
+      vSpan.innerHTML = `? Unverified · ${esc(reason)}`;
+      state.counts.unverified++;
+    } else if (status === 'rejected') {
+      vSpan.className = 'claim-verdict rejected';
+      vSpan.innerHTML = `✕ Rejected · ${esc(reason)}`;
+      state.counts.rejected++;
+    }
+    $('#verified-counter').textContent = `${state.counts.verified} Verified · ${state.counts.rejected} Rejected`;
+  }, 220);
+}
+
+// Start research run
+function startRun(query, isSample) {
+  if (state.eventSource) state.eventSource.close();
+  state.running = true;
+  state.t0 = Date.now();
+  state.activeLanes = {};
+  state.claims = {};
+  state.counts = { verified: 0, unverified: 0, rejected: 0 };
+  state.stepCount = 0;
+
+  qInput.disabled = true;
+  sendBtn.disabled = true;
+
+  $('#pipeline-card').style.display = 'block';
+  $('#report-section').style.display = 'none';
+  $('#subq-lanes').innerHTML = '';
+  $('#log-box').innerHTML = '';
+  $('#loop-notice').style.display = 'none';
+  $('#banner').style.display = isSample ? 'block' : 'none';
+  $('#verified-counter').textContent = '0 Verified';
+
+  setStage(0);
+  addLog('system', `Research initiated: "${esc(query)}"`);
+
+  // Build FormData for multipart POST /api/runs
+  const fd = new FormData();
+  fd.append('question', query);
+  fd.append('sample', isSample ? '1' : '0');
+  for (const f of state.uploadedFiles) {
+    fd.append('files', f);
+  }
+
+  fetch('/api/runs', { method: 'POST', body: fd })
+    .then(r => {
+      if (!r.ok) return r.json().then(e => { throw new Error(e.detail || 'Failed to initialize run'); });
+      return r.json();
+    })
+    .then(data => {
+      state.runId = data.run_id;
+      listenToEvents(data.run_id);
+    })
+    .catch(err => {
+      addLog('error', err.message, 'bad');
+      state.running = false;
+      qInput.disabled = false;
+      sendBtn.disabled = false;
+    });
+}
+
+function listenToEvents(runId) {
+  const url = `/api/runs/${encodeURIComponent(runId)}/events`;
+  state.eventSource = new EventSource(url);
+
+  state.eventSource.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      handleEvent(data);
+    } catch (err) {
+      console.error('Failed to parse SSE payload:', err, e.data);
+    }
+  };
+
+  state.eventSource.onerror = () => {
+    state.eventSource.close();
+    if (state.running) {
+      state.running = false;
+      qInput.disabled = false;
+      sendBtn.disabled = false;
+      addLog('system', 'Connection closed');
+    }
+  };
+}
+
+function handleEvent(ev) {
+  const { step, kind, payload: p = {} } = ev;
+
+  if (kind === 'report' && ev.report) {
+    state.running = false;
+    if (state.eventSource) state.eventSource.close();
+    setStage(4, true);
+    $('#loop-notice').style.display = 'none';
+    addLog('synthesizer', '<b>Final report generated successfully</b>', 'ok');
+    qInput.disabled = false;
+    sendBtn.disabled = false;
+    renderReport(ev.report);
+    return;
+  }
+  if (step === 'synthesize' && kind === 'report') {
+    setStage(4);
+    addLog('synthesizer', 'Compiling cited sections and references');
+    return;
+  }
+
+  if (kind === 'error') {
+    state.running = false;
+    if (state.eventSource) state.eventSource.close();
+    qInput.disabled = false;
+    sendBtn.disabled = false;
+    addLog('error', esc(ev.message), 'bad');
+    return;
+  }
+
+  if (step in STAGE_MAP && kind !== 'done') {
+    setStage(STAGE_MAP[step]);
+  }
+
+  if (step === 'plan' && kind === 'subquestions') {
+    (p.sub_questions || []).forEach(sq => {
+      getOrCreateLane(sq.id, sq.question);
+    });
+    addLog('planner', `Decomposed into ${p.sub_questions.length} parallel sub-questions`);
+  }
+  else if (step === 'research' && kind === 'search') {
+    const lane = getOrCreateLane(p.subq);
+    const qline = lane.querySelector('#qline-' + p.subq);
+    const qtext = lane.querySelector('#qtext-' + p.subq);
+    const pbadge = lane.querySelector('#pbadge-' + p.subq);
+    qline.style.display = 'flex';
+    qtext.textContent = p.query;
+    pbadge.textContent = p.provider || 'web';
+    pbadge.className = 'provider-badge ' + (p.provider || 'web');
+    addLog('researcher', `[${esc(p.subq)}] searched: "${esc(p.query)}" (${esc(p.provider || 'web')}) → ${p.results} results`);
+  }
+  else if (step === 'research' && kind === 'evidence') {
+    const statusSpan = $('#status-' + p.subq);
+    if (statusSpan) statusSpan.textContent = `${p.passages} passages stored`;
+    addLog('researcher', `[${esc(p.subq)}] ${p.passages} evidence passages stored`);
+  }
+  else if (step === 'draft' && kind === 'claims') {
+    (p.items || []).forEach(item => renderClaim(item, p.subq));
+    addLog('drafter', `[${esc(p.subq)}] drafted ${(p.items || []).length} atomic claims`);
+  }
+  else if (step === 'draft' && kind === 'no_evidence') {
+    addLog('drafter', `[${esc(p.subq)}] No evidence found to draft claims`, 'warn');
+  }
+  else if (step === 'verify' && kind === 'verdict') {
+    applyVerdict(p.cid, p.status, p.reason);
+    const cls = p.status === 'verified' ? 'ok' : p.status === 'rejected' ? 'bad' : 'warn';
+    addLog('verifier', `[${esc(p.cid)}] ${esc(p.status)}${p.reason ? ' — ' + esc(p.reason) : ''}`, cls);
+  }
+  else if (step === 'coverage' && kind === 'loop_back') {
+    setStage(1);
+    const weakList = (p.weak || []).join(', ');
+    $('#loop-notice').style.display = 'flex';
+    $('#loop-text').textContent = `Thin evidence for [${weakList}] → searching again (round ${p.loop})`;
+    addLog('coverage', `Thin evidence for ${weakList} → looping back to research (round ${p.loop})`, 'warn');
+  }
+  else if (step === 'coverage' && kind === 'done') {
+    $('#loop-notice').style.display = 'none';
+    addLog('coverage', 'Coverage check complete');
+  }
+  else if (step === 'contradict' && kind === 'found') {
+    const count = (p.contradictions || []).length;
+    addLog('contradict', `Contradiction check: ${count} conflict${count === 1 ? '' : 's'} identified`);
+  }
+  else if (step === 'llm' && kind === 'call') {
+    const tok = p.tokens ? `${p.tokens} tok` : '';
+    addLog('mesh', `${esc(p.tag || 'call')} / ${esc(p.model || 'llm')} / ${esc(tok)} (${p.ms}ms)`);
+  }
+}
+
+// Render Report
+function renderReport(r) {
+  const repSec = $('#report-section');
+  const m = r.metrics || {};
+
+  $('#report-title').textContent = r.question;
+
+  // Metric pills
+  const groundedPct = Math.round((m.groundedness || 0) * 100);
+  $('#report-metrics').innerHTML = `
+    <span class="metric-pill highlight">✓ ${groundedPct}% Grounded</span>
+    <span class="metric-pill">${m.claims_verified || 0}/${m.claims_total || 0} Claims Verified</span>
+    <span class="metric-pill">${m.claims_rejected || 0} Rejected</span>
+    <span class="metric-pill">${m.loops || 0} Loop-back${m.loops === 1 ? '' : 's'}</span>
+    <span class="metric-pill">${m.contradictions || 0} Contradictions</span>
+    <span class="metric-pill">${m.sources_cited || 0} Sources Cited</span>
+  `;
+
+  // Body content with citations
+  const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<a class="citation" href="#src-$1">[$1]</a>');
+
+  let bodyHtml = `<h2>Executive Summary</h2><p>${citeReplace(r.summary)}</p>`;
+  for (const s of (r.sections || [])) {
+    bodyHtml += `<h3>${esc(s.question)}</h3>`;
+    if (s.thin) {
+      bodyHtml += `<div class="thin-notice">Evidence was limited for this sub-question; conclusions should be treated with caution.</div>`;
+    }
+    bodyHtml += `<p>${citeReplace(s.text) || '<em>No verified evidence was found for this sub-question.</em>'}</p>`;
+  }
+  $('#report-body').innerHTML = bodyHtml;
+
+  // Contradictions
+  const contraBlock = $('#contra-block');
+  const contraList = $('#contra-items');
+  if (r.contradictions && r.contradictions.length > 0) {
+    contraBlock.style.display = 'block';
+    contraList.innerHTML = r.contradictions.map(c => `
+      <div class="contra-item">
+        <div class="contra-exp">${esc(c.explanation)}</div>
+        ${(c.claims || []).map(cl => `
+          <div class="contra-claim">• ${esc(cl.text)} ${citeReplace((cl.sources || []).map(n => `[${n}]`).join(''))}</div>
+        `).join('')}
+        ${c.more_reliable ? `<div style="font: 500 11.5px var(--font-mono); color: var(--ok); margin-top:4px;">★ Higher-quality source backs ${esc(c.more_reliable)}</div>` : ''}
+      </div>
+    `).join('');
+  } else {
+    contraBlock.style.display = 'none';
+  }
+
+  // Bibliography
+  const srcList = $('#sources-list');
+  srcList.innerHTML = (r.sources || []).map(b => `
+    <div class="source-row" id="src-${b.n}">
+      <div>
+        <span style="font: 700 12px var(--font-mono); color: var(--muted); margin-right: 8px;">[${b.n}]</span>
+        <a href="${esc(b.url)}" target="_blank" rel="noopener" class="source-title">${esc(b.title || b.url)}</a>
+      </div>
+      <span class="tier-tag ${esc(b.tier)}">${esc(b.tier)}</span>
+    </div>
+  `).join('');
+
+  // Download links
+  const rid = r.run_id || state.runId || 'sample';
+  $('#dl-pdf').href = `/api/report/${encodeURIComponent(rid)}.pdf`;
+  $('#dl-html').href = `/api/report/${encodeURIComponent(rid)}.html`;
+  $('#dl-md').href = `/api/report/${encodeURIComponent(rid)}.md`;
+
+  repSec.style.display = 'block';
+  repSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Decision Trail Toggle
+function toggleTrail() {
+  const body = $('#trail-body');
+  const isOpen = body.classList.toggle('open');
+  $('#trail-icon').textContent = isOpen ? '▲' : '▼';
+  if (isOpen && !body.dataset.loaded) {
+    loadDecisionTrail();
+  }
+}
+
+function loadDecisionTrail() {
+  const rid = state.runId || 'sample';
+  fetch(`/api/runs/${encodeURIComponent(rid)}/trail`)
+    .then(r => r.json())
+    .then(data => {
+      const body = $('#trail-body');
+      body.dataset.loaded = 'true';
+      let html = '';
+
+      if (data.accepted && data.accepted.length) {
+        html += `<div class="trail-group"><div class="trail-group-title">Accepted Claims (${data.accepted.length})</div>`;
+        data.accepted.forEach(c => {
+          html += `<div>• <b>${esc(c.cid)}</b>: ${esc(c.text)}</div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (data.rejected && data.rejected.length) {
+        html += `<div class="trail-group"><div class="trail-group-title" style="color:var(--bad)">Rejected Claims (${data.rejected.length})</div>`;
+        data.rejected.forEach(c => {
+          html += `<div>• <b>${esc(c.cid)}</b>: <del>${esc(c.text)}</del><br><span style="color:var(--bad); margin-left:14px;">Reason: ${esc(c.reason || 'unsupported')}</span></div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (data.unverified && data.unverified.length) {
+        html += `<div class="trail-group"><div class="trail-group-title" style="color:var(--warn)">Unverified Claims (${data.unverified.length})</div>`;
+        data.unverified.forEach(c => {
+          html += `<div>• <b>${esc(c.cid)}</b>: ${esc(c.text)}<br><span style="color:var(--warn); margin-left:14px;">Reason: ${esc(c.reason)}</span></div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (data.dropped_sentences && data.dropped_sentences.length) {
+        html += `<div class="trail-group"><div class="trail-group-title">Dropped Sentences (${data.dropped_sentences.length})</div>`;
+        data.dropped_sentences.forEach(s => {
+          html += `<div>• <span style="color:var(--muted)">"${esc(s)}"</span> (missing claim citation)</div>`;
+        });
+        html += `</div>`;
+      }
+
+      body.innerHTML = html || '<div>No trail entries recorded.</div>';
+    })
+    .catch(() => {
+      $('#trail-body').innerHTML = '<div>Could not load audit trail.</div>';
+    });
+}
+
+// Follow-up QA
+function askFollowup() {
+  const input = $('#followup-input');
+  const q = input.value.trim();
+  if (!q) return;
+
+  const resBox = $('#followup-res');
+  resBox.style.display = 'block';
+  resBox.innerHTML = `<em>Consulting verified claims…</em>`;
+
+  const rid = state.runId || 'sample';
+  fetch(`/api/runs/${encodeURIComponent(rid)}/followup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q })
+  })
+    .then(r => r.json())
+    .then(data => {
+      const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<span class="citation">[$1]</span>');
+      resBox.innerHTML = `<strong>Answer:</strong> ${citeReplace(data.answer)}`;
+    })
+    .catch(err => {
+      resBox.innerHTML = `<span style="color:var(--bad)">Error: ${esc(err.message)}</span>`;
+    });
+}
+</script>
+</body>
+</html>

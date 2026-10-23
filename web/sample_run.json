@@ -1,1 +1,258 @@
-{"events": [{"delay": 0.5, "step": "plan", "kind": "subquestions", "payload": {"sub_questions": [{"id": "Q1", "question": "How fast is demand growing?"}, {"id": "Q2", "question": "What regulatory risks exist?"}]}}, {"delay": 0.6, "step": "research", "kind": "search", "payload": {"subq": "Q1", "query": "battery demand growth forecast", "results": 6}}, {"delay": 0.5, "step": "research", "kind": "search", "payload": {"subq": "Q2", "query": "battery regulation compliance costs", "results": 5}}, {"delay": 0.5, "step": "research", "kind": "evidence", "payload": {"subq": "Q1", "passages": 6}}, {"delay": 0.3, "step": "research", "kind": "evidence", "payload": {"subq": "Q2", "passages": 2}}, {"delay": 0.7, "step": "draft", "kind": "claims", "payload": {"subq": "Q1", "claims": 3, "items": [{"cid": "C1", "text": "Analysts expect demand to keep growing through the forecast period.", "sources": ["sample-research.org"]}, {"cid": "C2", "text": "Falling cell prices are a main driver of adoption.", "sources": ["sample-news.com"]}, {"cid": "C3", "text": "Demand will triple within two years.", "sources": ["sample-news.com"]}]}}, {"delay": 0.5, "step": "draft", "kind": "claims", "payload": {"subq": "Q2", "claims": 2, "items": [{"cid": "C4", "text": "New rules raise compliance costs for producers.", "sources": ["sample-agency.gov"]}, {"cid": "C5", "text": "Fines apply to firms that do not comply.", "sources": ["sample-agency.gov"]}]}}, {"delay": 0.6, "step": "verify", "kind": "verdict", "payload": {"cid": "C1", "status": "verified", "verdict": "", "reason": "stated in source", "claim": "", "sources": ["sample-research.org"]}}, {"delay": 0.4, "step": "verify", "kind": "verdict", "payload": {"cid": "C2", "status": "verified", "verdict": "", "reason": "stated in source", "claim": "", "sources": ["sample-news.com"]}}, {"delay": 0.5, "step": "verify", "kind": "verdict", "payload": {"cid": "C3", "status": "rejected", "verdict": "", "reason": "source does not say demand will triple", "claim": "", "sources": ["sample-news.com"]}}, {"delay": 0.4, "step": "verify", "kind": "verdict", "payload": {"cid": "C4", "status": "unverified", "verdict": "", "reason": "numbers not found in cited source", "claim": "", "sources": ["sample-agency.gov"]}}, {"delay": 0.4, "step": "verify", "kind": "verdict", "payload": {"cid": "C5", "status": "verified", "verdict": "", "reason": "stated in source", "claim": "", "sources": ["sample-agency.gov"]}}, {"delay": 0.6, "step": "coverage", "kind": "loop_back", "payload": {"weak": ["Q2"], "loop": 1}}, {"delay": 0.6, "step": "research", "kind": "search", "payload": {"subq": "Q2", "query": "battery producer recycling rules fines", "results": 6}}, {"delay": 0.5, "step": "draft", "kind": "claims", "payload": {"subq": "Q2", "claims": 3, "items": [{"cid": "C6", "text": "Producers must meet recycling requirements to sell in the market.", "sources": ["sample-agency.gov"]}]}}, {"delay": 0.5, "step": "verify", "kind": "verdict", "payload": {"cid": "C6", "status": "verified", "verdict": "", "reason": "stated in source", "claim": "", "sources": ["sample-agency.gov"]}}, {"delay": 0.5, "step": "coverage", "kind": "done", "payload": {"thin": []}}, {"delay": 0.5, "step": "contradict", "kind": "found", "payload": {"contradictions": []}}, {"delay": 0.9, "step": "synthesize", "kind": "report", "payload": {}}], "report": {"run_id": "sample", "question": "What are the main risks of investing in the EV battery market? (sample run)", "summary": "Demand is expected to keep growing, helped by falling cell prices [1][2]. Regulation adds compliance costs and penalties [3].", "sections": [{"id": "Q1", "question": "How fast is demand growing?", "text": "Analysts expect demand to keep growing [1]. Falling cell prices are a main driver [2].", "thin": false}, {"id": "Q2", "question": "What regulatory risks exist?", "text": "Fines apply to firms that do not comply [3]. Producers must meet recycling requirements [3].", "thin": false}], "contradictions": [], "sources": [{"n": 1, "title": "sample-research.org", "url": "https://sample-research.org", "quality": 0.65, "tier": "general", "kind": "web"}, {"n": 2, "title": "sample-news.com", "url": "https://sample-news.com", "quality": 0.5, "tier": "general", "kind": "web"}, {"n": 3, "title": "sample-agency.gov", "url": "https://sample-agency.gov", "quality": 1.0, "tier": "primary", "kind": "web"}], "sub_questions": [{"id": "Q1", "question": "How fast is demand growing?", "queries_tried": []}, {"id": "Q2", "question": "What regulatory risks exist?", "queries_tried": []}], "accepted": [{"cid": "C1", "subq_id": "Q1", "text": "Analysts expect demand to keep growing.", "status": "", "verdict": "", "reason": "", "quote": "(sample)", "evidence_ids": [], "source_numbers": [1]}, {"cid": "C2", "subq_id": "Q1", "text": "Falling cell prices are a main driver.", "status": "", "verdict": "", "reason": "", "quote": "(sample)", "evidence_ids": [], "source_numbers": [2]}, {"cid": "C5", "subq_id": "Q2", "text": "Fines apply to firms that do not comply.", "status": "", "verdict": "", "reason": "", "quote": "(sample)", "evidence_ids": [], "source_numbers": [3]}, {"cid": "C6", "subq_id": "Q2", "text": "Producers must meet recycling requirements.", "status": "", "verdict": "", "reason": "", "quote": "(sample)", "evidence_ids": [], "source_numbers": [3]}], "unverified": [{"cid": "C4", "subq_id": "Q2", "text": "New rules raise compliance costs for producers.", "status": "", "verdict": "", "reason": "numbers not found in cited source", "quote": "(sample)", "evidence_ids": [], "source_numbers": [3]}], "rejected": [{"cid": "C3", "subq_id": "Q1", "text": "Demand will triple within two years.", "status": "", "verdict": "", "reason": "source does not say demand will triple", "quote": "(sample)", "evidence_ids": [], "source_numbers": []}], "dropped_sentences": [], "metrics": {"groundedness": 0.667, "claims_total": 6, "claims_verified": 4, "claims_unverified": 1, "claims_rejected": 1, "coverage": 1.0, "loops": 1, "contradictions": 0, "sources_cited": 3, "seconds": 0}}}
+{
+  "events": [
+    {
+      "delay": 0.4,
+      "step": "plan",
+      "kind": "subquestions",
+      "payload": {
+        "sub_questions": [
+          { "id": "Q1", "question": "How fast is EV battery demand growing?", "queries": ["battery demand growth forecast 2026"], "tried": [] },
+          { "id": "Q2", "question": "What regulatory risks and compliance costs exist?", "queries": ["battery regulation compliance penalties"], "tried": [] }
+        ]
+      }
+    },
+    {
+      "delay": 0.3,
+      "step": "llm",
+      "kind": "call",
+      "payload": { "tag": "planner", "model": "openai/gpt-4o-mini", "ms": 380, "tokens": 640 }
+    },
+    {
+      "delay": 0.5,
+      "step": "research",
+      "kind": "search",
+      "payload": { "subq": "Q1", "query": "battery demand growth forecast 2026", "results": 6, "provider": "tavily", "urls": ["https://sample-research.org", "https://sample-news.com"] }
+    },
+    {
+      "delay": 0.4,
+      "step": "research",
+      "kind": "search",
+      "payload": { "subq": "Q2", "query": "battery regulation compliance penalties", "results": 5, "provider": "ddg", "urls": ["https://sample-agency.gov"] }
+    },
+    {
+      "delay": 0.4,
+      "step": "research",
+      "kind": "evidence",
+      "payload": { "subq": "Q1", "passages": 6 }
+    },
+    {
+      "delay": 0.3,
+      "step": "research",
+      "kind": "evidence",
+      "payload": { "subq": "Q2", "passages": 2 }
+    },
+    {
+      "delay": 0.5,
+      "step": "draft",
+      "kind": "claims",
+      "payload": {
+        "subq": "Q1",
+        "claims": 3,
+        "items": [
+          { "cid": "C1", "text": "Analysts expect EV battery demand to keep growing steadily through 2030.", "sources": ["sample-research.org"] },
+          { "cid": "C2", "text": "Falling cell prices remain a primary driver of vehicle adoption.", "sources": ["sample-news.com"] },
+          { "cid": "C3", "text": "Global battery demand will triple within two months.", "sources": ["sample-news.com"] }
+        ]
+      }
+    },
+    {
+      "delay": 0.3,
+      "step": "llm",
+      "kind": "call",
+      "payload": { "tag": "drafter", "model": "openai/gpt-4o-mini", "ms": 590, "tokens": 1120 }
+    },
+    {
+      "delay": 0.4,
+      "step": "draft",
+      "kind": "claims",
+      "payload": {
+        "subq": "Q2",
+        "claims": 2,
+        "items": [
+          { "cid": "C4", "text": "New regional recycling rules raise compliance costs for all producers.", "sources": ["sample-agency.gov"] },
+          { "cid": "C5", "text": "Fines and market restrictions apply to non-compliant manufacturers.", "sources": ["sample-agency.gov"] }
+        ]
+      }
+    },
+    {
+      "delay": 0.4,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C1",
+        "status": "verified",
+        "verdict": "supported",
+        "reason": "stated in market survey",
+        "claim": "Analysts expect EV battery demand to keep growing steadily through 2030.",
+        "sources": ["sample-research.org"]
+      }
+    },
+    {
+      "delay": 0.3,
+      "step": "llm",
+      "kind": "call",
+      "payload": { "tag": "verifier", "model": "openai/gpt-4o-mini", "ms": 320, "tokens": 480 }
+    },
+    {
+      "delay": 0.3,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C2",
+        "status": "verified",
+        "verdict": "supported",
+        "reason": "stated in cell cost analysis",
+        "claim": "Falling cell prices remain a primary driver of vehicle adoption.",
+        "sources": ["sample-news.com"]
+      }
+    },
+    {
+      "delay": 0.4,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C3",
+        "status": "rejected",
+        "verdict": "unsupported",
+        "reason": "source does not say demand will triple in two months",
+        "claim": "Global battery demand will triple within two months.",
+        "sources": ["sample-news.com"]
+      }
+    },
+    {
+      "delay": 0.3,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C4",
+        "status": "unverified",
+        "verdict": "partial",
+        "reason": "specific cost increase figure not found in cited passage",
+        "claim": "New regional recycling rules raise compliance costs for all producers.",
+        "sources": ["sample-agency.gov"]
+      }
+    },
+    {
+      "delay": 0.3,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C5",
+        "status": "verified",
+        "verdict": "supported",
+        "reason": "stated in regulatory statute",
+        "claim": "Fines and market restrictions apply to non-compliant manufacturers.",
+        "sources": ["sample-agency.gov"]
+      }
+    },
+    {
+      "delay": 0.5,
+      "step": "coverage",
+      "kind": "loop_back",
+      "payload": { "weak": ["Q2"], "loop": 1 }
+    },
+    {
+      "delay": 0.5,
+      "step": "research",
+      "kind": "search",
+      "payload": { "subq": "Q2", "query": "battery producer extended responsibility recycling audit", "results": 6, "provider": "tavily", "urls": ["https://sample-agency.gov"] }
+    },
+    {
+      "delay": 0.4,
+      "step": "draft",
+      "kind": "claims",
+      "payload": {
+        "subq": "Q2",
+        "claims": 3,
+        "items": [
+          { "cid": "C6", "text": "Producers must establish certified collection networks to retain sales permits.", "sources": ["sample-agency.gov"] }
+        ]
+      }
+    },
+    {
+      "delay": 0.4,
+      "step": "verify",
+      "kind": "verdict",
+      "payload": {
+        "cid": "C6",
+        "status": "verified",
+        "verdict": "supported",
+        "reason": "stated verbatim in article 14 directive",
+        "claim": "Producers must establish certified collection networks to retain sales permits.",
+        "sources": ["sample-agency.gov"]
+      }
+    },
+    {
+      "delay": 0.4,
+      "step": "coverage",
+      "kind": "done",
+      "payload": { "thin": [] }
+    },
+    {
+      "delay": 0.4,
+      "step": "contradict",
+      "kind": "found",
+      "payload": { "contradictions": [] }
+    },
+    {
+      "delay": 0.5,
+      "step": "synthesize",
+      "kind": "report",
+      "payload": {}
+    }
+  ],
+  "report": {
+    "run_id": "sample",
+    "question": "What are the main risks of investing in the EV battery market in 2026? (sample run)",
+    "summary": "EV battery demand continues expanding rapidly, sustained by declining cell costs [1][2]. However, increasingly stringent regional recycling mandates and mandatory collection infrastructure present significant compliance risks and legal penalties for producers [3].",
+    "sections": [
+      {
+        "id": "Q1",
+        "question": "How fast is EV battery demand growing?",
+        "text": "Market analysts forecast EV battery demand to expand steadily through 2030 [1]. Declining pack and cell costs serve as the primary catalyst for mass adoption [2].",
+        "thin": false
+      },
+      {
+        "id": "Q2",
+        "question": "What regulatory risks and compliance costs exist?",
+        "text": "Manufacturers face substantial monetary fines and commercial sales restrictions for failure to meet mandated sustainability targets [3]. Companies are legally required to establish certified recycling networks [3].",
+        "thin": false
+      }
+    ],
+    "contradictions": [],
+    "sources": [
+      { "n": 1, "title": "Global EV Battery Outlook & Demand Forecast", "url": "https://sample-research.org", "quality": 0.85, "tier": "reputable", "kind": "web" },
+      { "n": 2, "title": "Lithium Cell Pricing Index & Industry Margins", "url": "https://sample-news.com", "quality": 0.75, "tier": "general", "kind": "web" },
+      { "n": 3, "title": "Clean Energy Regulatory Directive on Battery Recycling", "url": "https://sample-agency.gov", "quality": 1.0, "tier": "primary", "kind": "web" }
+    ],
+    "sub_questions": [
+      { "id": "Q1", "question": "How fast is EV battery demand growing?", "queries_tried": ["battery demand growth forecast 2026"] },
+      { "id": "Q2", "question": "What regulatory risks and compliance costs exist?", "queries_tried": ["battery regulation compliance penalties", "battery producer extended responsibility recycling audit"] }
+    ],
+    "accepted": [
+      { "cid": "C1", "subq_id": "Q1", "text": "Analysts expect EV battery demand to keep growing steadily through 2030.", "status": "verified", "verdict": "supported", "reason": "stated in market survey", "quote": "demand to keep growing steadily through 2030", "evidence_ids": ["E1"], "source_numbers": [1] },
+      { "cid": "C2", "subq_id": "Q1", "text": "Falling cell prices remain a primary driver of vehicle adoption.", "status": "verified", "verdict": "supported", "reason": "stated in cell cost analysis", "quote": "falling cell prices remain a primary driver", "evidence_ids": ["E2"], "source_numbers": [2] },
+      { "cid": "C5", "subq_id": "Q2", "text": "Fines and market restrictions apply to non-compliant manufacturers.", "status": "verified", "verdict": "supported", "reason": "stated in regulatory statute", "quote": "non-compliant firms face fines and loss of access", "evidence_ids": ["E3"], "source_numbers": [3] },
+      { "cid": "C6", "subq_id": "Q2", "text": "Producers must establish certified collection networks to retain sales permits.", "status": "verified", "verdict": "supported", "reason": "stated verbatim in article 14 directive", "quote": "establish certified collection networks", "evidence_ids": ["E4"], "source_numbers": [3] }
+    ],
+    "unverified": [
+      { "cid": "C4", "subq_id": "Q2", "text": "New regional recycling rules raise compliance costs for all producers.", "status": "unverified", "verdict": "partial", "reason": "specific cost increase figure not found in cited passage", "quote": "(unverified)", "evidence_ids": ["E3"], "source_numbers": [3] }
+    ],
+    "rejected": [
+      { "cid": "C3", "subq_id": "Q1", "text": "Global battery demand will triple within two months.", "status": "rejected", "verdict": "unsupported", "reason": "source does not say demand will triple in two months", "quote": "(rejected)", "evidence_ids": ["E2"], "source_numbers": [] }
+    ],
+    "dropped_sentences": [],
+    "metrics": {
+      "groundedness": 0.833,
+      "claims_total": 6,
+      "claims_verified": 4,
+      "claims_unverified": 1,
+      "claims_rejected": 1,
+      "coverage": 1.0,
+      "loops": 1,
+      "contradictions": 0,
+      "sources_cited": 3,
+      "seconds": 4.8
+    }
+  }
+}
