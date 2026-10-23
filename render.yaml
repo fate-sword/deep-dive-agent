@@ -1,8 +1,10 @@
 services:
   - type: web
-    name: verified-research
+    name: deeptrace
     runtime: docker
     plan: free
     envVars:
       - key: MESH_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
         sync: false
