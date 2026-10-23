@@ -1,0 +1,23 @@
+{
+  "provider": "openrouter",
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "verifier_model": "dots-studio/dots-3-note-preview:free",
+  "judge_model": null,
+  "dev_run": true,
+  "date": "2026-10-23",
+  "summary": {
+    "groundedness": null,
+    "quote_grounded": null,
+    "coverage": null,
+    "topic_recall": null,
+    "independent_agree": null,
+    "loops": null
+  },
+  "rows": [
+    {
+      "id": "ev-risks",
+      "error": "free-model daily request limit reached; try later or switch provider"
+    }
+  ],
+  "banner": "DEV RUN, not valid for submission"
+}
