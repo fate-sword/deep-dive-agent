@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from langgraph.graph import END, StateGraph
 
 from . import agents
+from .board import build_findings_board
 from .config import Settings, get_settings
 from .ingest import DocIndex, chunk_text, rank_passages
 from .llm import LLM
@@ -344,6 +345,7 @@ def build_graph(ctx: Ctx):
             "rejected": [c for c in state["claims"] if c["status"] == "rejected"],
             "dropped_sentences": dropped_all,
         }
+        report["board"] = build_findings_board(report)
         ctx.log("synthesize", "report", {"metrics": metrics}, "Synthesizer: report written")
         return {"report": report}
 

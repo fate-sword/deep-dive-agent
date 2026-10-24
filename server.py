@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from vresearch import answer_followup, run_research
+from vresearch.board import build_findings_board
 from vresearch.config import get_settings
 from vresearch.export import to_html, to_markdown, to_pdf
 from vresearch.providers import get_provider
@@ -26,6 +27,8 @@ get_provider(settings.llm_provider)
 
 SAMPLE_PATH = os.path.join(WEB, "sample_run.json")
 SAMPLE = json.load(open(SAMPLE_PATH, encoding="utf-8")) if os.path.exists(SAMPLE_PATH) else {"events": [], "report": {}}
+if SAMPLE.get("report"):
+    SAMPLE["report"]["board"] = build_findings_board(SAMPLE["report"])
 
 slots = threading.Semaphore(2)
 last_by_ip: dict[str, float] = {}
@@ -64,9 +67,12 @@ def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, c
                     on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p}),
                     provider=provider
                 )
-            if rep and isinstance(rep, dict) and "metrics" in rep:
-                rep["metrics"]["provider"] = provider or settings.llm_provider
-                rep["metrics"]["model"] = settings.model
+            if rep and isinstance(rep, dict):
+                if "metrics" in rep:
+                    rep["metrics"]["provider"] = provider or settings.llm_provider
+                    rep["metrics"]["model"] = settings.model
+                if "board" not in rep:
+                    rep["board"] = build_findings_board(rep)
             q.put({"kind": "report", "report": rep})
         except Exception as ex:
             q.put({"kind": "error", "message": str(ex)[:300]})

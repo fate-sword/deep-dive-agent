@@ -7,7 +7,7 @@
 <meta name="description" content="Deeptrace is an AI research agent that decomposes questions, gathers real evidence, and adversarially verifies every claim against retrieved sources.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
 <style>
 :root {
   --bg: #fbfbf9;
@@ -37,6 +37,7 @@
   --font-serif: "Newsreader", Georgia, serif;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-hand: "Caveat", cursive, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -729,6 +730,480 @@ h1.hero {
 @keyframes in { from { opacity: 0; } to { opacity: 1; } }
 
 /* ========================================================
+   FINDINGS BOARD: NOTEGRID LAYOUT
+   ======================================================== */
+.findings-board-wrap {
+  display: none;
+  max-width: 860px;
+  margin: 44px auto 28px;
+  padding: 0 16px;
+  width: 100%;
+  box-sizing: border-box;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.findings-board-wrap.is-visible {
+  opacity: 1;
+}
+
+.findings-board-card {
+  position: relative;
+  background-color: #fbfdff;
+  background-image:
+    linear-gradient(#e6eefc 1px, transparent 1px),
+    linear-gradient(90deg, #e6eefc 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  padding: 36px 32px 28px;
+}
+
+/* Eyebrow & Header */
+.board-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.board-mono-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.board-accent-word {
+  font-family: var(--font-hand);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-left: 2px;
+}
+
+/* Inline SVG Stickers (max 3: sparkle, magnifier, grounded stamp) */
+.board-sticker {
+  display: inline-block;
+  vertical-align: middle;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.sticker-sparkle {
+  color: var(--accent);
+}
+.sticker-mag {
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+/* Headline Finding */
+.board-headline {
+  font: 400 clamp(20px, 2.3vw, 25px) / 1.35 var(--font-serif);
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin: 0 0 26px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed rgba(37, 99, 235, 0.18);
+}
+
+/* Hand-drawn marker underline on highlight phrase */
+.marker-highlight {
+  position: relative;
+  display: inline;
+  white-space: normal;
+  background: linear-gradient(104deg, rgba(37,99,235,0) 0.9%, rgba(37,99,235,0.13) 2.4%, rgba(37,99,235,0.18) 5.8%, rgba(37,99,235,0.12) 93%, rgba(37,99,235,0) 98%);
+  border-radius: 4px 6px 3px 5px;
+  padding: 2px 6px 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.marker-highlight::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 100%;
+  height: 4px;
+  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 10" preserveAspectRatio="none"><path d="M0 5 Q 25 1, 50 6 T 100 4" fill="none" stroke="%232563eb" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.5"/></svg>') repeat-x;
+  background-size: 100% 100%;
+  pointer-events: none;
+}
+
+/* Hanging Corner Tag */
+.board-corner-tag-wrap {
+  position: absolute;
+  top: -14px;
+  right: 28px;
+  z-index: 15;
+}
+.board-corner-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.08);
+  padding: 5px 12px;
+  font: 600 11.5px var(--font-mono);
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  outline: none;
+}
+.board-corner-tag:hover, .board-corner-tag:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
+}
+.board-corner-tag:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tag-pin-hole {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  box-shadow: inset 0 1px 1px rgba(0,0,0,0.25);
+}
+
+/* Corner Tag Quarantined Drawer / Popover */
+.corner-tag-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 330px;
+  max-width: 90vw;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgba(20, 20, 20, 0.14);
+  padding: 16px;
+  z-index: 30;
+}
+.corner-tag-popover.open {
+  display: block;
+}
+.popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.popover-title {
+  font: 600 11px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.popover-close {
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.popover-close:hover { color: var(--ink); }
+.quarantine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.quarantine-item {
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 8px;
+}
+.quarantine-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.quarantine-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.quarantine-cid {
+  font: 700 11px var(--font-mono);
+  color: var(--muted);
+}
+.badge-rejected {
+  font: 600 10px var(--font-mono);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border: 1px solid rgba(194, 65, 12, 0.2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+}
+.badge-unverified {
+  font: 600 10px var(--font-mono);
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid rgba(183, 121, 31, 0.2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+}
+.quarantine-text {
+  font: 13px/1.45 var(--font-sans);
+  color: var(--muted);
+  text-decoration: line-through;
+  display: block;
+  margin-bottom: 4px;
+}
+.quarantine-reason {
+  font: 12px/1.4 var(--font-sans);
+  color: var(--ink-2);
+  background: var(--surface-2);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Lanes */
+.board-lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+.board-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lane-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid rgba(37, 99, 235, 0.12);
+}
+.lane-title {
+  font-family: var(--font-hand);
+  font-size: 23px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.lane-thin-tag {
+  font: 500 11px var(--font-mono);
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* Notes */
+.lane-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.note-card {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.035);
+  padding: 18px 14px 14px;
+  position: relative;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+  cursor: default;
+}
+.note-pin {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 1px #cbd5e1;
+}
+/* Subtle ±0.7° pure CSS tilt */
+.note-card:nth-child(4n+1) { transform: rotate(-0.6deg); }
+.note-card:nth-child(4n+2) { transform: rotate(0.65deg); }
+.note-card:nth-child(4n+3) { transform: rotate(-0.45deg); }
+.note-card:nth-child(4n+4) { transform: rotate(0.5deg); }
+
+.note-card:hover, .note-card:focus-visible {
+  transform: translateY(-2px) rotate(0deg) !important;
+  box-shadow: 0 6px 16px rgba(20, 20, 20, 0.08);
+}
+.note-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 6px;
+}
+.note-cid {
+  font: 700 11px var(--font-mono);
+  color: var(--muted);
+}
+.note-status-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 11px var(--font-mono);
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid rgba(31, 138, 91, 0.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.note-claim-text {
+  font: 13.5px/1.48 var(--font-sans);
+  color: var(--ink);
+  margin: 0 0 10px;
+}
+.note-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.domain-chip {
+  font: 500 10.5px var(--font-mono);
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Footer Row */
+.board-footer {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(37, 99, 235, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.board-stamp-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.board-stamp {
+  transform: rotate(-3deg);
+  user-select: none;
+  filter: drop-shadow(0 2px 4px rgba(31, 138, 91, 0.12));
+}
+
+.board-prose-toggle {
+  flex: 1;
+  min-width: 240px;
+}
+.board-prose-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 13px var(--font-sans);
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.board-prose-btn::-webkit-details-marker { display: none; }
+.board-prose-btn:hover {
+  background: #dce9ff;
+  border-color: var(--accent);
+}
+.board-prose-content {
+  margin-top: 14px;
+  padding: 14px 18px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font: 14.5px/1.65 var(--font-sans);
+  color: var(--ink-2);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+}
+
+.board-downloads {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.btn-sm {
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+}
+
+/* Responsive & Reduced Motion */
+@media (max-width: 760px) {
+  .board-lanes {
+    grid-template-columns: 1fr;
+  }
+  .board-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .board-corner-tag-wrap {
+    position: static;
+    margin-bottom: 14px;
+  }
+  .corner-tag-popover {
+    right: auto;
+    left: 0;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .findings-board-wrap {
+    transition: none !important;
+    opacity: 1 !important;
+  }
+  .note-card, .board-corner-tag, .board-stamp {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
+/* ========================================================
    REPORT SECTION
    ======================================================== */
 #report-section {
@@ -1106,6 +1581,61 @@ footer {
     <button type="button" class="sample-cta" onclick="startSampleRun()">▶ See a sample run</button>
   </div>
 
+  <!-- FINDINGS BOARD: notegrid layout (replaces the Executive Summary block) -->
+  <section id="findings-board-section" class="findings-board-wrap" aria-label="Key Findings Board">
+    <div class="findings-board-card">
+      <!-- Hanging Corner Tag -->
+      <div class="board-corner-tag-wrap" id="board-corner-tag-wrap">
+        <div class="board-corner-tag" id="board-corner-tag" role="button" tabindex="0" aria-expanded="false" aria-haspopup="dialog" aria-label="Quarantined unverified and rejected claims" onclick="toggleCornerTag(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleCornerTag(event);}">
+          <div class="tag-pin-hole" aria-hidden="true"></div>
+          <!-- Sticker 2: Magnifier doodle -->
+          <svg class="board-sticker sticker-mag" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span id="corner-tag-label">0 rejected, 0 unverified</span>
+        </div>
+        <div class="corner-tag-popover" id="corner-tag-popover" role="dialog" aria-label="Quarantined Claims">
+          <div class="popover-header">
+            <span class="popover-title">Quarantined Claims</span>
+            <button type="button" class="popover-close" onclick="closeCornerTag()" aria-label="Close quarantined claims panel">✕</button>
+          </div>
+          <div class="quarantine-list" id="quarantine-list"></div>
+        </div>
+      </div>
+
+      <!-- Top Row: Mono Label + Sticker 1 (Sparkle) + Accent Word in Caveat -->
+      <div class="board-top-row">
+        <div class="board-mono-label">
+          <!-- Sticker 1: Sparkle doodle -->
+          <svg class="board-sticker sticker-sparkle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          <span>KEY FINDINGS · PINNED FROM VERIFIED CLAIMS</span>
+          <span class="board-accent-word">curated</span>
+        </div>
+      </div>
+
+      <!-- Headline Finding: one serif sentence with hand-drawn marker underline on key phrase -->
+      <h3 class="board-headline" id="board-headline"></h3>
+
+      <!-- Sub-question Lanes (Notegrid) -->
+      <div class="board-lanes" id="board-lanes"></div>
+
+      <!-- Footer Row: Grounded-% stamp (Sticker 3), Prose toggle, Download buttons -->
+      <div class="board-footer">
+        <div class="board-stamp-wrap" id="board-stamp-wrap"></div>
+        <details class="board-prose-toggle" id="board-prose-toggle">
+          <summary class="board-prose-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            <span>Read as prose</span>
+          </summary>
+          <div class="board-prose-content" id="board-prose-content"></div>
+        </details>
+        <div class="board-downloads">
+          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-pdf" href="#" download>PDF</a>
+          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-html" href="#" target="_blank">HTML</a>
+          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-md" href="#" download>Markdown</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Structured Report Section -->
   <section id="report-section">
     <div class="report-header">
@@ -1286,6 +1816,9 @@ function resetForm() {
   renderFileChips();
   $('#pipeline-card').style.display = 'none';
   $('#report-section').style.display = 'none';
+  const fb = $('#findings-board-section');
+  if (fb) { fb.style.display = 'none'; fb.classList.remove('is-visible'); }
+  if (typeof closeCornerTag === 'function') closeCornerTag();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1427,6 +1960,9 @@ function startRun(query, isSample) {
 
   $('#pipeline-card').style.display = 'block';
   $('#report-section').style.display = 'none';
+  const fb = $('#findings-board-section');
+  if (fb) { fb.style.display = 'none'; fb.classList.remove('is-visible'); }
+  if (typeof closeCornerTag === 'function') closeCornerTag();
   $('#subq-lanes').innerHTML = '';
   $('#log-box').innerHTML = '';
   $('#loop-notice').style.display = 'none';
@@ -1579,9 +2115,241 @@ function handleEvent(ev) {
   }
 }
 
-// Render Report
+// Corner tag toggle helpers
+function toggleCornerTag(e) {
+  if (e) e.stopPropagation();
+  const popover = $('#corner-tag-popover');
+  const tag = $('#board-corner-tag');
+  if (!popover || !tag) return;
+  const isOpen = popover.classList.toggle('open');
+  tag.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+}
+
+function closeCornerTag() {
+  const popover = $('#corner-tag-popover');
+  const tag = $('#board-corner-tag');
+  if (popover) popover.classList.remove('open');
+  if (tag) tag.setAttribute('aria-expanded', 'false');
+}
+
+// Close corner tag when clicking outside or pressing Escape
+document.addEventListener('click', e => {
+  const wrap = $('#board-corner-tag-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    closeCornerTag();
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeCornerTag();
+});
+
+function renderHeadlineWithHighlight(text, highlight) {
+  if (!text) return '';
+  const escapedText = esc(text);
+  if (!highlight) return escapedText;
+  const escapedHl = esc(highlight);
+  const idx = escapedText.toLowerCase().indexOf(escapedHl.toLowerCase());
+  if (idx === -1) {
+    return `<span class="marker-highlight">${escapedText}</span>`;
+  }
+  const before = escapedText.slice(0, idx);
+  const matched = escapedText.slice(idx, idx + escapedHl.length);
+  const after = escapedText.slice(idx + escapedHl.length);
+  return `${before}<span class="marker-highlight">${matched}</span>${after}`;
+}
+
+// Client-side fallback builder in case r.board is not serialized
+function buildFindingsBoardClient(r) {
+  const accepted = r.accepted || [];
+  const rejected = r.rejected || [];
+  const unverified = r.unverified || [];
+  const subqs = r.sub_questions || (r.sections || []).map(s => ({ id: s.id, question: s.question }));
+
+  const srcMap = {};
+  (r.sources || []).forEach(s => {
+    let domain = s.url ? s.url.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '') : (s.title || '');
+    if (s.n) srcMap[s.n] = domain;
+    if (s.url) srcMap[s.url] = domain;
+  });
+
+  const bySubq = {};
+  accepted.forEach(c => {
+    const sq = c.subq_id || 'Q1';
+    if (!bySubq[sq]) bySubq[sq] = [];
+    bySubq[sq].push(c);
+  });
+
+  const summary = (r.summary || '').trim();
+  const headlineText = summary ? summary.split(/(?<=[.!?])\s+/)[0] : (accepted[0] ? accepted[0].text : '');
+  const words = (headlineText || '').split(/\s+/).filter(w => w.length > 3);
+  const highlight = words.length >= 2 ? `${words[0]} ${words[1]}` : (words[0] || '');
+
+  const lanes = subqs.map(q => {
+    const qid = q.id || 'Q1';
+    const qClaims = bySubq[qid] || [];
+    const isThin = qClaims.length < 2;
+
+    const notes = qClaims.map(c => {
+      const nums = c.source_numbers || [];
+      const domains = [];
+      nums.forEach(n => { if (srcMap[n] && !domains.includes(srcMap[n])) domains.push(srcMap[n]); });
+      if (!domains.length && c.sources) domains.push(...c.sources.slice(0, 2));
+      if (!domains.length) domains.push('retrieved source');
+
+      return {
+        cid: c.cid,
+        text: String(c.text),
+        domains: domains.slice(0, 2),
+        source_numbers: nums,
+        status: 'verified',
+        status_label: 'Verified'
+      };
+    });
+
+    let shortQ = (q.question || '').replace(/^(what|how|why|which|are|is|describe|explain)\s+(is|are|the|do|does|have)?\s*/i, '').replace(/[?!.]+$/, '').trim();
+    shortQ = shortQ.split(/\s+/).slice(0, 4).join(' ').toLowerCase();
+
+    return {
+      subq_id: qid,
+      title: `${qid} · ${shortQ}`,
+      full_question: q.question,
+      verified_count: qClaims.length,
+      is_thin: isThin,
+      thin_label: isThin ? 'not enough proof found' : '',
+      notes: notes
+    };
+  });
+
+  const m = r.metrics || {};
+  const gPct = Math.round((m.groundedness || 0) * 100);
+
+  return {
+    mono_label: 'KEY FINDINGS · PINNED FROM VERIFIED CLAIMS',
+    headline: { text: headlineText, highlight },
+    lanes,
+    corner_tag: {
+      rejected_count: rejected.length,
+      unverified_count: unverified.length,
+      label: `${rejected.length} rejected, ${unverified.length} unverified`,
+      rejected,
+      unverified
+    },
+    footer: {
+      grounded_pct: gPct,
+      prose_summary: summary
+    }
+  };
+}
+
+function renderFindingsBoard(r) {
+  const b = r.board || buildFindingsBoardClient(r);
+  if (!b) return;
+
+  // 1. Headline
+  const h = b.headline || {};
+  const hlText = h.text || r.summary || (r.accepted && r.accepted[0] ? r.accepted[0].text : '');
+  $('#board-headline').innerHTML = renderHeadlineWithHighlight(hlText, h.highlight || '');
+
+  // 2. Corner tag: N rejected, M unverified
+  const ct = b.corner_tag || { label: '0 rejected, 0 unverified', rejected: [], unverified: [] };
+  $('#corner-tag-label').textContent = ct.label || `${(ct.rejected || []).length} rejected, ${(ct.unverified || []).length} unverified`;
+
+  // Corner tag quarantined list
+  const qList = $('#quarantine-list');
+  const items = [];
+  (ct.rejected || []).forEach(c => {
+    items.push(`
+      <div class="quarantine-item">
+        <div class="quarantine-meta">
+          <span class="quarantine-cid">${esc(c.cid || '')}</span>
+          <span class="badge-rejected">Rejected</span>
+        </div>
+        <del class="quarantine-text">${esc(c.text || '')}</del>
+        <div class="quarantine-reason"><strong>Reason:</strong> ${esc(c.reason || 'unsupported by cited source')}</div>
+      </div>
+    `);
+  });
+  (ct.unverified || []).forEach(c => {
+    items.push(`
+      <div class="quarantine-item">
+        <div class="quarantine-meta">
+          <span class="quarantine-cid">${esc(c.cid || '')}</span>
+          <span class="badge-unverified">Unverified</span>
+        </div>
+        <del class="quarantine-text">${esc(c.text || '')}</del>
+        <div class="quarantine-reason"><strong>Reason:</strong> ${esc(c.reason || 'partially supported or quote unverified')}</div>
+      </div>
+    `);
+  });
+  qList.innerHTML = items.length ? items.join('') : '<div style="color:var(--muted);font-size:12px;">No unverified or rejected claims.</div>';
+
+  // 3. Sub-question Lanes & Notes
+  const lanesEl = $('#board-lanes');
+  lanesEl.innerHTML = (b.lanes || []).map(lane => {
+    const thinBadge = lane.is_thin ? `<span class="lane-thin-tag">not enough proof found</span>` : '';
+    const notesHtml = (lane.notes || []).map(n => `
+      <article class="note-card" tabindex="0" aria-label="Verified claim ${esc(n.cid)}">
+        <div class="note-pin" aria-hidden="true"></div>
+        <div class="note-meta">
+          <span class="note-cid">${esc(n.cid)}</span>
+          <span class="note-status-verified">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            Verified
+          </span>
+        </div>
+        <p class="note-claim-text">${esc(n.text)}</p>
+        <div class="note-domains">
+          ${(n.domains || []).map(d => `<span class="domain-chip">${esc(d)}</span>`).join('')}
+        </div>
+      </article>
+    `).join('');
+
+    return `
+      <section class="board-lane" aria-label="${esc(lane.full_question || lane.title)}">
+        <div class="lane-header">
+          <span class="lane-title">${esc(lane.title)}</span>
+          ${thinBadge}
+        </div>
+        <div class="lane-notes">
+          ${notesHtml || '<div style="color:var(--muted);font-size:12px;font-style:italic;">No verified claims pinned yet.</div>'}
+        </div>
+      </section>
+    `;
+  }).join('');
+
+  // 4. Footer: Grounded-% stamp (Sticker 3), Prose summary toggle, Downloads
+  const m = r.metrics || {};
+  const groundedPct = (b.footer && typeof b.footer.grounded_pct === 'number') ? b.footer.grounded_pct : Math.round((m.groundedness || 0) * 100);
+  const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<a class="citation" href="#src-$1">[$1]</a>');
+
+  // Sticker 3: Grounded-% stamp
+  $('#board-stamp-wrap').innerHTML = `
+    <div class="board-stamp" title="${groundedPct}% Grounded evidence">
+      <svg width="68" height="68" viewBox="0 0 80 80" aria-label="${groundedPct}% Grounded Stamp">
+        <circle cx="40" cy="40" r="37" fill="none" stroke="#1f8a5b" stroke-width="2" stroke-dasharray="3,1.5" stroke-opacity="0.85"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#1f8a5b" stroke-width="1.2" stroke-opacity="0.6"/>
+        <text x="40" y="27" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700" fill="#1f8a5b" text-anchor="middle" letter-spacing="1">GROUNDED</text>
+        <text x="40" y="48" font-family="'JetBrains Mono', monospace" font-size="18" font-weight="800" fill="#1f8a5b" text-anchor="middle">${groundedPct}%</text>
+        <text x="40" y="61" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="600" fill="#1f8a5b" text-anchor="middle" letter-spacing="0.5">VERIFIED</text>
+      </svg>
+    </div>
+  `;
+
+  // Prose toggle content
+  const prose = (b.footer && b.footer.prose_summary) || r.summary || '';
+  $('#board-prose-content').innerHTML = prose ? `<p style="margin:0;">${citeReplace(prose)}</p>` : '<em>No prose summary available.</em>';
+
+  // Board download links
+  const rid = r.run_id || state.runId || 'sample';
+  if ($('#board-dl-pdf')) $('#board-dl-pdf').href = `/api/report/${encodeURIComponent(rid)}.pdf`;
+  if ($('#board-dl-html')) $('#board-dl-html').href = `/api/report/${encodeURIComponent(rid)}.html`;
+  if ($('#board-dl-md')) $('#board-dl-md').href = `/api/report/${encodeURIComponent(rid)}.md`;
+}
+
+// Render Report (Structured Report + Findings Board)
 function renderReport(r) {
   const repSec = $('#report-section');
+  const fbSec = $('#findings-board-section');
   const m = r.metrics || {};
 
   $('#report-title').textContent = r.question;
@@ -1600,10 +2368,13 @@ function renderReport(r) {
     <span class="metric-pill" style="font-size:11px; color:var(--muted);">${esc(provLabel)}${mod ? ' / ' + esc(mod) : ''}</span>
   `;
 
-  // Body content with citations
+  // Render Findings Board (replaces Executive Summary block)
+  renderFindingsBoard(r);
+
+  // Body content with citations: Findings Board replaces Executive Summary, sections remain
   const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<a class="citation" href="#src-$1">[$1]</a>');
 
-  let bodyHtml = `<h2>Executive Summary</h2><p>${citeReplace(r.summary)}</p>`;
+  let bodyHtml = '';
   for (const s of (r.sections || [])) {
     bodyHtml += `<h3>${esc(s.question)}</h3>`;
     if (s.thin) {
@@ -1625,14 +2396,17 @@ function renderReport(r) {
     </div>
   `).join('');
 
-  // Download links
+  // Download links for report toolbar
   const rid = r.run_id || state.runId || 'sample';
   $('#dl-pdf').href = `/api/report/${encodeURIComponent(rid)}.pdf`;
   $('#dl-html').href = `/api/report/${encodeURIComponent(rid)}.html`;
   $('#dl-md').href = `/api/report/${encodeURIComponent(rid)}.md`;
 
+  // Reveal sections: Findings Board appears between pipeline card and report, then scroll smoothly to it
+  fbSec.style.display = 'block';
+  requestAnimationFrame(() => fbSec.classList.add('is-visible'));
   repSec.style.display = 'block';
-  repSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  fbSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // Decision Trail Toggle
