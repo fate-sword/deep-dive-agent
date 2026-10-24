@@ -120,7 +120,9 @@ def filter_and_rank_passages(
                     "final_score": float(raw_overlap),
                 })
         if not scored:
-            return evidence[:k]
+            # FIX v3: If the relevance filter would drop ALL passages for a lane, keep the top K by relevance (K=5)
+            # and let the drafter decide, instead of dropping everything.
+            return evidence[:5]
 
     scored.sort(key=lambda x: x["final_score"], reverse=True)
 

@@ -13,8 +13,8 @@ PLANNER_SYS = """You are the PLANNER in a research system. Break the user's ques
 non-overlapping sub-questions that together cover it (for example: market size, key players, known risks,
 recent events, regulation).
 For each sub-question provide:
-- "label": 4 words or fewer summarizing the sub-question topic (e.g. "evidence-based supplements").
-- "answer_spec": one line specifying what a good answer contains (e.g. "names specific supplements or ingredients, each with trial evidence on efficacy and a safety note").
+- "label": a 5-6 word STATEMENT (a noun phrase or short statement, NOT a question, NO trailing question mark, preserves intent; e.g. "Opening lines and behavioral tactics", "Key creators and online communities").
+- "answer_spec": one line specifying what a good answer contains. For entity or list questions ("who", "which", "what laws"), specify what kind of entity or fact to return (e.g. "names specific authors, gurus, or online communities who taught these techniques").
 - "queries": 2 distinct, targeted web-search queries.
 
 Today is {date}.
@@ -48,11 +48,13 @@ Evaluate whether each drafted claim directly answers the sub-question and satisf
 
 Rules:
 - "direct": The claim directly provides the information requested in the sub-question and satisfies the answer specification (e.g. names specific entities, ingredients, findings, mechanisms, trial results, or data requested).
+  For entity or list questions ("who", "which", "what laws", "which organizations"): a claim that names a relevant person, author, guru, teacher, community, organization, statute, or specific entity with their role or contribution COUNTS AS "direct".
 - "off_topic": The claim is generic background, an unrelated warning, peripheral regulation, disclaimers, or does not directly answer what was asked.
 
 There is NO "partial" and NO "(background)" tag. Only "direct" or "off_topic".
+Echo the EXACT candidate ID provided in brackets (e.g. if the claim is [temp_Q1_1], use "cid": "temp_Q1_1").
 Return JSON:
-{"evaluations":[{"cid":"C1","relevance":"direct|off_topic","reason":"one brief sentence"}]}"""
+{"evaluations":[{"cid":"<exact_id_from_brackets>","relevance":"direct|off_topic","reason":"one brief sentence"}]}"""
 
 VERIFIER_SYS = """You are the VERIFIER, an adversarial fact-checker. You see one CLAIM and the passages it cites.
 Decide whether the passages themselves support the claim. Ignore your own knowledge: judge only from the text shown.
@@ -93,24 +95,85 @@ def today() -> str:
     return datetime.date.today().isoformat()
 
 
-def _clean_label(question: str) -> str:
-    cleaned = re.sub(r"^(what|how|why|which|are|is|describe|explain)\s+(is|are|the|do|does|have)?\s*", "", question, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r"[?!.]+$", "", cleaned).strip()
+CONNECTIVES = {
+    "and", "or", "that", "of", "the", "to", "for", "in", "with", "by", "on", "at", "a", "an", "is", "are", "from", "as"
+}
+
+
+def validate_lane_label(label: str, question: str) -> tuple[bool, str]:
+    """Validate Findings Board lane label according to strict FIX v3 specification:
+    - 5 to 6 words.
+    - No trailing question mark.
+    - Must not end on a stop word or connective.
+    - Must not be a verbatim prefix of the question.
+    """
+    if not label or not isinstance(label, str):
+        return False, "label is empty"
+    cleaned = label.strip()
+    if cleaned.endswith("?") or re.search(r"\?\s*$", cleaned):
+        return False, "trailing question mark"
     words = cleaned.split()
-    return " ".join(words[:4]).lower() if words else question[:25].lower()
+    if len(words) not in (5, 6):
+        return False, f"word count {len(words)} is not 5 or 6 words"
+    last_word = words[-1].lower().strip(".,;:?!\"'()")
+    if last_word in CONNECTIVES:
+        return False, f"ends on connective/stopword '{last_word}'"
+    # Check if verbatim prefix of question
+    q_words = [re.sub(r"[^\w]", "", w).lower() for w in question.split() if re.sub(r"[^\w]", "", w)]
+    l_words = [re.sub(r"[^\w]", "", w).lower() for w in words if re.sub(r"[^\w]", "", w)]
+    if len(q_words) >= len(l_words) and q_words[:len(l_words)] == l_words:
+        return False, "verbatim prefix of question"
+    return True, "valid"
 
 
-def plan(llm, question: str) -> list[dict]:
-    out = llm.json(PLANNER_SYS.replace("{date}", today()), f"Question: {question}", tag="planner")
+REGEN_LABEL_SYS = """You are a label generator for a research findings board.
+Convert the given sub-question into a 5-6 word STATEMENT (a noun phrase or short statement, NOT a question).
+Rules:
+- Exactly 5 or 6 words.
+- NO question mark at the end.
+- Must NOT end on a connective or stop word (and, or, that, of, the, to, for, in, with, by, on, at, a, an, from, as).
+- Must NOT be a verbatim prefix of the question (do NOT just take the first 5 words).
+- Preserves the intent of the question.
+Examples:
+- "What specific conversational and behavioral techniques do pickup artists use to initiate and attract women?" -> "Opening lines and behavioral tactics"
+- "How do pickup artists exploit psychological vulnerabilities and insecurities in women?" -> "Psychological manipulation techniques and effects"
+- "Who are the most influential creators, teachers, or communities that popularized these pickup artist techniques?" -> "Key creators and online communities"
+- "Are there any laws or regulatory actions against deceptive dating or pickup artist practices?" -> "Laws against deceptive dating tactics"
+Return JSON: {"label": "..."}"""
+
+
+def regenerate_lane_label(llm, question: str, model: str | None = None) -> str:
+    """Make one targeted LLM call to regenerate an invalid or missing lane label."""
+    try:
+        out = llm.json(REGEN_LABEL_SYS, f"SUB-QUESTION: {question}", model=model, tag="label_regen", max_tokens=100)
+        lbl = (out.get("label") or "").strip()
+        ok, _ = validate_lane_label(lbl, question)
+        if ok:
+            return lbl
+    except Exception:
+        pass
+    return ""
+
+
+def plan(llm, question: str, model: str | None = None) -> list[dict]:
+    out = llm.json(PLANNER_SYS.replace("{date}", today()), f"Question: {question}", model=model, tag="planner")
     subs = out.get("sub_questions", []) if isinstance(out, dict) else out
     result = []
     for i, s in enumerate(subs[:6], 1):
         q = (s.get("question") or "").strip()
         if not q:
             continue
-        lbl = (s.get("label") or "").strip()
-        if not lbl or len(lbl.split()) > 5:
-            lbl = _clean_label(q)
+        raw_label = (s.get("label") or "").strip()
+        ok, _ = validate_lane_label(raw_label, q)
+        if ok:
+            lbl = raw_label
+        else:
+            regen = regenerate_lane_label(llm, q, model=model)
+            if regen:
+                lbl = regen
+            else:
+                # If regeneration also fails, show full question wrapped over two lines (NEVER truncate or take first N words)
+                lbl = q
         spec = (s.get("answer_spec") or "").strip()
         if not spec:
             spec = f"Directly answers '{q}' with specific names, facts, evidence, and data."
@@ -124,7 +187,7 @@ def plan(llm, question: str) -> list[dict]:
             "tried": []
         })
     if not result:
-        lbl = _clean_label(question)
+        lbl = regenerate_lane_label(llm, question, model=model) or question
         result = [{
             "id": "Q1",
             "question": question,
@@ -191,9 +254,15 @@ def draft_claims(llm, subq: dict, evidence: list[dict], existing: list[str], mai
     return claims
 
 
+class RelevanceGateError(Exception):
+    """Raised when the relevance gate fails to parse or respond after retry."""
+    pass
+
+
 def evaluate_claim_relevance(llm, subq: dict, claims: list[dict], model: str | None = None) -> list[dict]:
     """Judge each drafted claim against the sub-question and answer_spec.
-    Returns list of dicts: [{'cid': 'C1', 'relevance': 'direct'|'off_topic', 'reason': '...'}]
+    Returns list of dicts: [{'cid': 'temp_Q1_1', 'relevance': 'direct'|'off_topic', 'reason': '...'}]
+    Retries once on JSON/LLM exception. If it still fails, raises RelevanceGateError.
     """
     if not claims:
         return []
@@ -201,39 +270,74 @@ def evaluate_claim_relevance(llm, subq: dict, claims: list[dict], model: str | N
     user = (f"Sub-question: {subq['question']}\n"
             f"Answer Specification: {subq.get('answer_spec', 'specific facts and evidence')}\n\n"
             f"DRAFTED CLAIMS:\n{claims_list}")
-    try:
-        out = llm.json(RELEVANCE_SYS, user, model=model, tag="relevance", max_tokens=1000)
-        evals = out.get("evaluations", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
-        eval_map = {}
-        for ev in evals:
-            if isinstance(ev, dict) and "cid" in ev:
-                rel = str(ev.get("relevance", "off_topic")).lower().strip()
-                eval_map[ev["cid"]] = {
-                    "cid": ev["cid"],
-                    "relevance": "direct" if rel == "direct" else "off_topic",
-                    "reason": ev.get("reason", "off_topic")
+
+    out = None
+    last_err = None
+    for attempt in range(2):
+        try:
+            out = llm.json(RELEVANCE_SYS, user, model=model, tag="relevance", max_tokens=1000)
+            if out and (isinstance(out, dict) and "evaluations" in out or isinstance(out, list)):
+                break
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                continue
+
+    if out is None or not (isinstance(out, dict) and "evaluations" in out or isinstance(out, list)):
+        err_msg = str(last_err) if last_err else "Failed to parse JSON response from relevance gate"
+        raise RelevanceGateError(f"Relevance gate JSON parse failure after retry: {err_msg[:100]}")
+
+    evals = out.get("evaluations", []) if isinstance(out, dict) else (out if isinstance(out, list) else [])
+
+    # Robust CID matching
+    eval_by_cid = {}
+    eval_by_int = {}
+    for ev in evals:
+        if not isinstance(ev, dict):
+            continue
+        rel = str(ev.get("relevance", "off_topic")).lower().strip()
+        verdict = "direct" if rel == "direct" else "off_topic"
+        reason = str(ev.get("reason") or ("direct match" if verdict == "direct" else "off-topic"))
+        raw_cid = str(ev.get("cid", "")).strip()
+        data = {"cid": raw_cid, "relevance": verdict, "reason": reason}
+        if raw_cid:
+            eval_by_cid[raw_cid] = data
+            digits = re.findall(r"\d+", raw_cid)
+            if digits:
+                eval_by_int[digits[-1]] = data
+
+    results = []
+    for idx, c in enumerate(claims):
+        cid = c["cid"]
+        matched = None
+        if cid in eval_by_cid:
+            matched = eval_by_cid[cid]
+        else:
+            digits = re.findall(r"\d+", cid)
+            if digits and digits[-1] in eval_by_int:
+                matched = eval_by_int[digits[-1]]
+            elif idx < len(evals) and isinstance(evals[idx], dict):
+                ev_pos = evals[idx]
+                rel_pos = str(ev_pos.get("relevance", "off_topic")).lower().strip()
+                matched = {
+                    "cid": cid,
+                    "relevance": "direct" if rel_pos == "direct" else "off_topic",
+                    "reason": str(ev_pos.get("reason", "positional evaluation"))
                 }
-        results = []
-        for c in claims:
-            cid = c["cid"]
-            if cid in eval_map:
-                results.append(eval_map[cid])
-            else:
-                results.append({"cid": cid, "relevance": "off_topic", "reason": "omitted by relevance judge"})
-        return results
-    except Exception as e:
-        target_words = set(re.findall(r"\w{4,}", (subq.get("answer_spec", "") + " " + subq["question"]).lower()))
-        results = []
-        for c in claims:
-            c_words = set(re.findall(r"\w{4,}", c["text"].lower()))
-            overlap = len(target_words & c_words)
-            rel = "direct" if overlap >= 2 else "off_topic"
+
+        if matched:
             results.append({
-                "cid": c["cid"],
-                "relevance": rel,
-                "reason": f"Fallback relevance (overlap={overlap})" if rel == "direct" else f"Fallback filtered off-topic: {str(e)[:60]}"
+                "cid": cid,
+                "relevance": matched["relevance"],
+                "reason": matched["reason"]
             })
-        return results
+        else:
+            results.append({
+                "cid": cid,
+                "relevance": "off_topic",
+                "reason": "omitted by relevance judge"
+            })
+    return results
 
 
 def _norm(s: str) -> str:

@@ -21,13 +21,15 @@ def _extract_domain(url_or_title: str) -> str:
     return url_or_title[:24]
 
 
-def _clean_lane_title(q_id: str, question: str) -> str:
-    """Generate a concise, human-friendly Caveat lane header like 'Q2 · regulatory risks'."""
-    q_clean = re.sub(r"^(what|how|why|which|are|is|describe|explain)\s+(is|are|the|do|does|have)?\s*", "", question, flags=re.IGNORECASE).strip()
-    q_clean = re.sub(r"[?!.]+$", "", q_clean).strip()
-    words = q_clean.split()
-    short = " ".join(words[:4]).lower() if words else question[:25].lower()
-    return f"{q_id} · {short}"
+def _clean_lane_title(q_id: str, label: str, question: str) -> str:
+    """Findings Board lane header: Q1 · <label> (5-6 word statement).
+    If label is missing or invalid, falls back to full question wrapped over lines.
+    NEVER truncates or takes first N words.
+    """
+    from .agents import validate_lane_label
+    ok, _ = validate_lane_label(label, question)
+    text = label if ok else (label.strip() if label and len(label.split()) in (5, 6) and not label.endswith("?") else question)
+    return f"{q_id} · {text}"
 
 
 def build_findings_board(report: dict) -> dict:
@@ -36,12 +38,13 @@ def build_findings_board(report: dict) -> dict:
     - Every note's text exactly equals an accepted claim's verbatim text.
     - No unverified or rejected claims are EVER rendered as notes on the board.
     - Rejected and unverified claims appear exclusively in the corner tag with reasons.
-    - Lanes with fewer than 2 verified claims show 'not enough proof found'.
+    - Lanes with fewer than 2 verified claims show 'not enough proof found' with the reason.
     """
     accepted = report.get("accepted", [])
     unverified = report.get("unverified", [])
     rejected = report.get("rejected", [])
     subqs = report.get("sub_questions", [])
+    lane_statuses = report.get("lane_statuses", {})
     if not subqs and report.get("sections"):
         subqs = [{"id": s.get("id"), "question": s.get("question", "")} for s in report.get("sections", [])]
 
@@ -84,9 +87,20 @@ def build_findings_board(report: dict) -> dict:
     for q in subqs:
         qid = q.get("id", "Q1")
         q_question = q.get("question", "")
+        q_label = q.get("label", "")
         q_claims = accepted_by_subq.get(qid, [])
         v_count = len(q_claims)
-        is_thin = v_count < 2
+
+        l_stat = lane_statuses.get(qid, {})
+        state_name = l_stat.get("state", "done" if v_count >= 2 else ("thin" if v_count > 0 else "empty"))
+        reason = l_stat.get("reason", "")
+        if not reason:
+            if v_count < 2 and v_count > 0:
+                reason = f"Only {v_count} verified claim found"
+            elif v_count == 0:
+                reason = "No verified claims found for this sub-question"
+
+        is_thin = (v_count < 2) or (state_name in ("thin", "empty", "error"))
 
         notes = []
         for c in q_claims:
@@ -113,9 +127,13 @@ def build_findings_board(report: dict) -> dict:
 
         lanes.append({
             "subq_id": qid,
-            "title": _clean_lane_title(qid, q_question),
+            "title": _clean_lane_title(qid, q_label, q_question),
+            "label": q_label,
             "full_question": q_question,
             "verified_count": v_count,
+            "state": state_name,
+            "reason": reason,
+            "counts": l_stat.get("counts", {}),
             "is_thin": is_thin,
             "thin_label": "not enough proof found" if is_thin else "",
             "notes": notes,

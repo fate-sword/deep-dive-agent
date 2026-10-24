@@ -62,6 +62,35 @@ def _domains(ids, evidence):
 
 def build_graph(ctx: Ctx):
     s = ctx.s
+    lane_states: dict[str, dict] = {}
+    lane_lock = threading.Lock()
+
+    def emit_lane_status(subq_id: str, new_state: str, reason: str = "", count_updates: dict | None = None):
+        with lane_lock:
+            if subq_id not in lane_states:
+                lane_states[subq_id] = {
+                    "subq": subq_id,
+                    "state": "searching",
+                    "counts": {
+                        "passages": 0, "kept_passages": 0, "drafted": 0,
+                        "fragments_dropped": 0, "off_topic_dropped": 0,
+                        "verified": 0, "unverified": 0, "rejected": 0
+                    },
+                    "reason": ""
+                }
+            cur = lane_states[subq_id]
+            cur["state"] = new_state
+            if reason:
+                cur["reason"] = reason
+            if count_updates:
+                cur["counts"].update(count_updates)
+            payload = {
+                "subq": subq_id,
+                "state": cur["state"],
+                "counts": dict(cur["counts"]),
+                "reason": cur["reason"]
+            }
+        ctx.log("lane", "status", payload, f"Lane [{subq_id}] {new_state}: {cur['reason']}" if cur["reason"] else None)
 
     def plan_node(state: State):
         try:
@@ -70,11 +99,13 @@ def build_graph(ctx: Ctx):
             ctx.log("plan", "fallback", {"error": str(e)}, "Planner: upstream provider rate-limited, using grounded heuristic decomposition")
             q_clean = state["question"].strip()
             subqs = [
-                {"id": "Q1", "label": "market drivers", "question": f"Current market drivers and core dynamics of {q_clean}", "answer_spec": f"Names specific market dynamics, drivers, and growth figures for {q_clean}.", "queries": [f"{q_clean} overview demand 2026", f"{q_clean} market drivers"], "tried": []},
-                {"id": "Q2", "label": "supply bottlenecks", "question": f"Key supply chain, material, and operational bottlenecks for {q_clean}", "answer_spec": f"Details concrete supply disruptions, shortages, and material risks for {q_clean}.", "queries": [f"{q_clean} supply chain risks", f"{q_clean} bottlenecks shortages 2026"], "tried": []},
-                {"id": "Q3", "label": "tech and competition", "question": f"Technological, substitution, and competitive risks for {q_clean}", "answer_spec": f"Identifies specific competing alternatives, technology hurdles, and substitution threats for {q_clean}.", "queries": [f"{q_clean} technology challenges competition", f"{q_clean} substitution risks"], "tried": []},
-                {"id": "Q4", "label": "regulations and policy", "question": f"Regulatory, policy, environmental, and compliance risks surrounding {q_clean}", "answer_spec": f"Cites specific regulatory standards, legal restrictions, or policy deadlines for {q_clean}.", "queries": [f"{q_clean} regulations policy 2026", f"{q_clean} tariffs compliance standards"], "tried": []},
+                {"id": "Q1", "label": "Core market drivers and dynamics", "question": f"Current market drivers and core dynamics of {q_clean}", "answer_spec": f"Names specific market dynamics, drivers, and growth figures for {q_clean}.", "queries": [f"{q_clean} overview demand 2026", f"{q_clean} market drivers"], "tried": []},
+                {"id": "Q2", "label": "Supply chain bottlenecks and risks", "question": f"Key supply chain, material, and operational bottlenecks for {q_clean}", "answer_spec": f"Details concrete supply disruptions, shortages, and material risks for {q_clean}.", "queries": [f"{q_clean} supply chain risks", f"{q_clean} bottlenecks shortages 2026"], "tried": []},
+                {"id": "Q3", "label": "Technological challenges and competition threats", "question": f"Technological, substitution, and competitive risks for {q_clean}", "answer_spec": f"Identifies specific competing alternatives, technology hurdles, and substitution threats for {q_clean}.", "queries": [f"{q_clean} technology challenges competition", f"{q_clean} substitution risks"], "tried": []},
+                {"id": "Q4", "label": "Regulatory compliance and policy standards", "question": f"Regulatory, policy, environmental, and compliance risks surrounding {q_clean}", "answer_spec": f"Cites specific regulatory standards, legal restrictions, or policy deadlines for {q_clean}.", "queries": [f"{q_clean} regulations policy 2026", f"{q_clean} tariffs compliance standards"], "tried": []},
             ]
+        for q in subqs:
+            emit_lane_status(q["id"], "searching", "Planning complete; preparing evidence search")
         ctx.log("plan", "subquestions", {"sub_questions": subqs}, f"Planner: {len(subqs)} sub-questions")
         return {"subqs": subqs, "evidence": [], "claims": [], "filtered_claims": [], "loop": 0, "focus": [q["id"] for q in subqs]}
 
@@ -185,13 +216,25 @@ def build_graph(ctx: Ctx):
                 n = sum(1 for e in evidence if e["subq_id"] == q["id"])
             ctx.log("research", "evidence", {"subq": q["id"], "passages": n}, f"Researcher [{q['id']}]: {n} passages stored")
 
+        def research_subq_safe(q):
+            try:
+                emit_lane_status(q["id"], "searching", f"Searching web sources (round {loop + 1})")
+                research_subq(q)
+                with evidence_lock:
+                    n = sum(1 for e in evidence if e["subq_id"] == q["id"])
+                emit_lane_status(q["id"], "searching", f"{n} passages stored", {"passages": n})
+            except Exception as e:
+                err_msg = f"Worker error: {str(e)[:100]}"
+                emit_lane_status(q["id"], "error", err_msg)
+                ctx.log("research", "error", {"subq": q["id"], "error": str(e)}, f"Researcher [{q['id']}]: {err_msg}")
+
         workers = max(1, getattr(s, "research_workers", 3))
         if workers > 1 and len(focus_qs) > 1:
             with ThreadPoolExecutor(max_workers=workers) as r_pool:
-                list(r_pool.map(research_subq, focus_qs))
+                list(r_pool.map(research_subq_safe, focus_qs))
         else:
             for q in focus_qs:
-                research_subq(q)
+                research_subq_safe(q)
 
         return {"evidence": evidence, "subqs": subqs}
 
@@ -206,7 +249,10 @@ def build_graph(ctx: Ctx):
             q_ev = [e for e in state["evidence"] if e["subq_id"] == q["id"]]
             # FIX 2: Passage relevance filter (BM25 over question + answer_spec + queries with bounded quality)
             ev = filter_and_rank_passages(q_ev, q, k=8)
+            emit_lane_status(q["id"], "drafting", f"Drafting claims from {len(ev)} passages", {"kept_passages": len(ev)})
             if not ev:
+                reason = f"No evidence passages matched question after {state['loop'] + 1} searches"
+                emit_lane_status(q["id"], "empty" if state["loop"] >= s.max_loops else "drafting", reason)
                 ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no relevant evidence found")
                 return
 
@@ -222,15 +268,13 @@ def build_graph(ctx: Ctx):
                     for s_text in valid_sents:
                         drafted.append({"text": agents.sanitize_claim_text(s_text), "evidence_ids": [passage["eid"]]})
 
-            if not drafted:
-                ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no claims drafted per answer spec")
-                return
-
-            # Temporary candidate claims for relevance gating
+            raw_drafted_count = len(drafted)
             temp_candidates = []
+            fragments_dropped = 0
             for idx, c in enumerate(drafted):
                 txt = agents.sanitize_claim_text(c.get("text") or "")
                 if not txt or len(txt) < 15 or not re.search(r"[a-zA-Z]{3,}", txt):
+                    fragments_dropped += 1
                     continue
                 temp_candidates.append({
                     "cid": f"temp_{q['id']}_{idx+1}",
@@ -238,14 +282,28 @@ def build_graph(ctx: Ctx):
                     "evidence_ids": c.get("evidence_ids", [])
                 })
 
+            emit_lane_status(q["id"], "filtering", "Filtering candidate claims per answer spec", {
+                "drafted": raw_drafted_count,
+                "fragments_dropped": fragments_dropped
+            })
+
             if not temp_candidates:
+                reason = "Drafter returned no valid claims"
+                emit_lane_status(q["id"], "empty" if state["loop"] >= s.max_loops else "drafting", reason)
+                ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no claims drafted per answer spec")
                 return
 
             # FIX 4: CLAIM RELEVANCE GATE (runs BEFORE verification, drops off_topic claims immediately)
             relevance_model = getattr(s, "relevance_model", s.verifier_model)
-            evals = agents.evaluate_claim_relevance(ctx.llm, q, temp_candidates, model=relevance_model)
-            eval_by_cid = {e["cid"]: e for e in evals}
+            try:
+                evals = agents.evaluate_claim_relevance(ctx.llm, q, temp_candidates, model=relevance_model)
+            except agents.RelevanceGateError as rge:
+                reason = f"Relevance gate JSON parse failure after retry: {str(rge)[:100]}"
+                emit_lane_status(q["id"], "error", reason)
+                ctx.log("draft", "error", {"subq": q["id"], "error": reason}, f"Drafter [{q['id']}]: {reason}")
+                return
 
+            eval_by_cid = {e["cid"]: e for e in evals}
             direct_candidates = []
             dropped_candidates = []
             for c in temp_candidates:
@@ -261,13 +319,6 @@ def build_graph(ctx: Ctx):
                         "reason": ev_res.get("reason", "off_topic")
                     })
 
-            # Emit relevance/filtered additive event
-            ctx.log("relevance", "filtered", {
-                "subq": q["id"],
-                "kept": len(direct_candidates),
-                "dropped": len(dropped_candidates)
-            }, f"relevance: filtered {len(dropped_candidates)} off-topic claims ({q['id']})")
-
             # Audit: Save dropped claims to SQLite
             for dc in dropped_candidates:
                 with claims_lock:
@@ -275,6 +326,25 @@ def build_graph(ctx: Ctx):
                     dc_stored = {**dc, "cid": filtered_cid}
                     filtered_claims_list.append(dc_stored)
                     ctx.store.save_filtered_claim(ctx.run_id, dc_stored)
+
+            with claims_lock:
+                total_dropped_subq = sum(1 for c in filtered_claims_list if c["subq_id"] == q["id"])
+
+            emit_lane_status(q["id"], "verifying" if direct_candidates else "filtering",
+                             f"Relevance gate kept {len(direct_candidates)}, filtered {len(dropped_candidates)}",
+                             {"off_topic_dropped": total_dropped_subq})
+
+            ctx.log("relevance", "filtered", {
+                "subq": q["id"],
+                "kept": len(direct_candidates),
+                "dropped": len(dropped_candidates)
+            }, f"relevance: filtered {len(dropped_candidates)} off-topic claims ({q['id']})")
+
+            if not direct_candidates:
+                if state["loop"] >= s.max_loops:
+                    reason = f"All {total_dropped_subq} drafted claims were filtered as off-topic after {state['loop'] + 1} searches"
+                    emit_lane_status(q["id"], "empty", reason)
+                return
 
             # Assign permanent CIDs and save ONLY direct claims
             items = []
@@ -307,14 +377,22 @@ def build_graph(ctx: Ctx):
                 n = sum(1 for c in claims if c["subq_id"] == q["id"])
             ctx.log("draft", "claims", {"subq": q["id"], "claims": n, "items": items}, f"Drafter [{q['id']}]: {n} claims drafted")
 
+        def draft_subq_safe(q):
+            try:
+                draft_subq(q)
+            except Exception as e:
+                err_msg = f"Worker error: {str(e)[:100]}"
+                emit_lane_status(q["id"], "error", err_msg)
+                ctx.log("draft", "error", {"subq": q["id"], "error": str(e)}, f"Drafter [{q['id']}]: {err_msg}")
+
         # Draft per sub-question in sub-question order to keep claim IDs stable
         workers = max(1, getattr(s, "research_workers", 3))
         if workers > 1 and len(focus_qs) > 1:
             with ThreadPoolExecutor(max_workers=workers) as d_pool:
-                list(d_pool.map(draft_subq, focus_qs))
+                list(d_pool.map(draft_subq_safe, focus_qs))
         else:
             for q in focus_qs:
-                draft_subq(q)
+                draft_subq_safe(q)
 
         return {"claims": claims, "filtered_claims": filtered_claims_list}
 
@@ -343,6 +421,19 @@ def build_graph(ctx: Ctx):
             ctx.log("verify", "verdict", {"cid": c["cid"], "status": c["status"], "verdict": c["verdict"],
                                           "reason": c["reason"], "claim": c["text"],
                                           "sources": _domains(c["evidence_ids"], state["evidence"])})
+
+        # Update per-lane verification counts
+        for q in state["subqs"]:
+            q_claims = [c for c in claims if c["subq_id"] == q["id"]]
+            v = sum(1 for c in q_claims if c["status"] == "verified")
+            uv = sum(1 for c in q_claims if c["status"] == "unverified")
+            rej = sum(1 for c in q_claims if c["status"] == "rejected")
+            cur_st = lane_states.get(q["id"], {}).get("state")
+            if cur_st != "error":
+                emit_lane_status(q["id"], "verifying", f"{v} verified, {uv} unverified, {rej} rejected", {
+                    "verified": v, "unverified": uv, "rejected": rej
+                })
+
         counts = {k: sum(1 for c in pending if c["status"] == k) for k in ("verified", "unverified", "rejected")}
         ctx.log("verify", "summary", counts, f"Verifier: {counts['verified']} verified, "
                 f"{counts['unverified']} unverified, {counts['rejected']} rejected")
@@ -353,9 +444,37 @@ def build_graph(ctx: Ctx):
                 if sum(1 for c in state["claims"] if c["subq_id"] == q["id"] and c["status"] == "verified")
                 < s.min_verified_per_subq]
         if weak and state["loop"] < s.max_loops:
+            for qid in weak:
+                v = sum(1 for c in state["claims"] if c["subq_id"] == qid and c["status"] == "verified")
+                cur_st = lane_states.get(qid, {}).get("state")
+                if cur_st != "error":
+                    emit_lane_status(qid, "searching", f"Thin evidence ({v} verified): searching again (round {state['loop'] + 2})")
             ctx.log("coverage", "loop_back", {"weak": weak, "loop": state["loop"] + 1},
                     f"Thin evidence for {', '.join(weak)}: looping back to research (round {state['loop'] + 1})")
             return {"focus": weak, "loop": state["loop"] + 1}
+
+        # Coverage complete or loops exhausted: finalize explicit lane status for every lane
+        for q in state["subqs"]:
+            qid = q["id"]
+            q_claims = [c for c in state["claims"] if c["subq_id"] == qid]
+            v = sum(1 for c in q_claims if c["status"] == "verified")
+            uv = sum(1 for c in q_claims if c["status"] == "unverified")
+            rej = sum(1 for c in q_claims if c["status"] == "rejected")
+            cur = lane_states.get(qid, {})
+            current_state = cur.get("state")
+            if current_state == "error":
+                continue
+            if v >= s.min_verified_per_subq:
+                emit_lane_status(qid, "done", f"{v} verified claims established", {"verified": v, "unverified": uv, "rejected": rej})
+            elif v > 0:
+                emit_lane_status(qid, "thin", f"Not enough proof found: only {v} verified claim after {state['loop'] + 1} searches", {"verified": v, "unverified": uv, "rejected": rej})
+            else:
+                fc = sum(1 for c in state.get("filtered_claims", []) if c.get("subq_id") == qid)
+                if fc > 0:
+                    emit_lane_status(qid, "empty", f"All {fc} drafted claims were filtered as off-topic after {state['loop'] + 1} searches", {"verified": 0, "unverified": uv, "rejected": rej, "off_topic_dropped": fc})
+                else:
+                    emit_lane_status(qid, "empty", f"No evidence passages matched question after {state['loop'] + 1} searches", {"verified": 0, "unverified": uv, "rejected": rej})
+
         ctx.log("coverage", "done", {"thin": weak}, "Coverage check complete" + (f"; still thin: {', '.join(weak)}" if weak else ""))
         return {"focus": [], "thin": weak}
 
@@ -461,6 +580,7 @@ def build_graph(ctx: Ctx):
             "sub_questions": [{"id": q["id"], "label": q.get("label", ""), "question": q["question"],
                                "answer_spec": q.get("answer_spec", ""), "queries_tried": q.get("tried", [])}
                               for q in state["subqs"]],
+            "lane_statuses": lane_states,
             "accepted": [{**c, "source_numbers": registry.numbers_for_claim(c)} for c in state["claims"] if c["status"] == "verified"],
             "unverified": [{**c, "source_numbers": registry.numbers_for_claim(c)} for c in state["claims"] if c["status"] == "unverified"],
             "rejected": [c for c in state["claims"] if c["status"] == "rejected"],

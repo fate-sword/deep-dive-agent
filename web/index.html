@@ -605,6 +605,50 @@ h1.hero {
 .provider-badge.ddg { background: #f0fdf4; color: #16a34a; }
 .provider-badge.wikipedia { background: #f4f4f5; color: #52525b; }
 
+.subq-counts-bar {
+  font: 500 11px var(--font-mono);
+  color: var(--muted);
+  margin-top: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.lane-reason-box {
+  background: #fefce8;
+  border: 1px solid #fef08a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #854d0e;
+  line-height: 1.4;
+}
+.lane-reason-box.empty {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+.lane-reason-box.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+.lane-reason-box .reason-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.lane-reason-box .reason-text {
+  flex: 1;
+  font-weight: 500;
+}
+
 /* Claim Cards */
 .claims-list { display: flex; flex-direction: column; gap: 8px; }
 .claim-card {
@@ -1004,7 +1048,10 @@ h1.hero {
   font-size: 23px;
   font-weight: 600;
   color: var(--ink);
-  line-height: 1.2;
+  line-height: 1.25;
+  white-space: normal;
+  word-break: break-word;
+  max-width: 100%;
 }
 .lane-thin-tag {
   font: 500 11px var(--font-mono);
@@ -1015,6 +1062,32 @@ h1.hero {
   padding: 2px 8px;
   letter-spacing: -0.01em;
   white-space: nowrap;
+}
+.lane-empty-notice {
+  background: #fefce8;
+  border: 1.5px dashed #fde047;
+  border-radius: 8px;
+  padding: 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #854d0e;
+  margin-top: 4px;
+}
+.lane-empty-notice .empty-title {
+  font: 700 12px var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #92400e;
+}
+.lane-empty-notice .empty-reason {
+  font-size: 13px;
+  color: #713f12;
+  margin: 0;
+  line-height: 1.45;
 }
 
 /* Notes */
@@ -1890,6 +1963,8 @@ function getOrCreateLane(subqId, title = '') {
       <span id="qtext-${esc(subqId)}"></span>
       <span class="provider-badge" id="pbadge-${esc(subqId)}">web</span>
     </div>
+    <div class="subq-counts-bar" id="counts-${esc(subqId)}" style="display:none"></div>
+    <div class="lane-reason-box" id="reason-${esc(subqId)}" style="display:none"></div>
     <div class="claims-list" id="claims-${esc(subqId)}"></div>
   `;
   container.appendChild(lane);
@@ -2095,6 +2170,38 @@ function handleEvent(ev) {
       addLog('relevance', `relevance: filtered ${dropped} off-topic claim${dropped === 1 ? '' : 's'} (${esc(p.subq || '')})`);
     }
   }
+  else if (step === 'lane' && kind === 'status') {
+    const subq = p.subq;
+    const lane = getOrCreateLane(subq);
+    const statusSpan = $('#status-' + subq);
+    const countsBar = $('#counts-' + subq);
+    const reasonBox = $('#reason-' + subq);
+
+    if (statusSpan) {
+      if (p.state === 'error') statusSpan.textContent = 'Error';
+      else if (p.state === 'empty') statusSpan.textContent = 'Empty';
+      else if (p.state === 'thin') statusSpan.textContent = 'Thin';
+      else if (p.state === 'done') statusSpan.textContent = 'Done';
+      else if (p.counts && p.counts.passages) statusSpan.textContent = `${p.counts.passages} passages`;
+    }
+
+    if (countsBar && p.counts) {
+      const c = p.counts;
+      countsBar.style.display = 'flex';
+      countsBar.textContent = `passages: ${c.passages || 0} · drafted: ${c.drafted || 0} · off-topic: ${c.off_topic_dropped || 0} · verified: ${c.verified || 0} · unverified: ${c.unverified || 0} · rejected: ${c.rejected || 0}`;
+    }
+
+    if (reasonBox) {
+      if ((p.state === 'empty' || p.state === 'thin' || p.state === 'error') && p.reason) {
+        reasonBox.style.display = 'flex';
+        reasonBox.className = 'lane-reason-box ' + p.state;
+        const icon = p.state === 'error' ? '❌' : (p.state === 'empty' ? 'ℹ️' : '⚠️');
+        reasonBox.innerHTML = `<span class="reason-icon">${icon}</span><span class="reason-text">${esc(p.reason)}</span>`;
+      } else {
+        reasonBox.style.display = 'none';
+      }
+    }
+  }
   else if (step === 'verify' && kind === 'verdict') {
     applyVerdict(p.cid, p.status, p.reason);
     const cls = p.status === 'verified' ? 'ok' : p.status === 'rejected' ? 'bad' : 'warn';
@@ -2213,15 +2320,26 @@ function buildFindingsBoardClient(r) {
       };
     });
 
-    let shortQ = (q.question || '').replace(/^(what|how|why|which|are|is|describe|explain)\s+(is|are|the|do|does|have)?\s*/i, '').replace(/[?!.]+$/, '').trim();
-    shortQ = shortQ.split(/\s+/).slice(0, 4).join(' ').toLowerCase();
+    let label = (q.label || '').trim();
+    const lWords = label.split(/\s+/).filter(Boolean);
+    const validLabel = lWords.length >= 5 && lWords.length <= 6 && !label.endsWith('?');
+    const displayTitle = validLabel ? `${qid} · ${label}` : `${qid} · ${q.question || label}`;
+
+    const laneStatuses = r.lane_statuses || {};
+    const lStat = laneStatuses[qid] || {};
+    const stateName = lStat.state || (qClaims.length >= 2 ? 'done' : (qClaims.length > 0 ? 'thin' : 'empty'));
+    const reason = lStat.reason || (isThin ? (qClaims.length === 1 ? 'Only 1 verified claim found' : 'No verified claims found for this sub-question') : '');
 
     return {
       subq_id: qid,
-      title: `${qid} · ${shortQ}`,
+      title: displayTitle,
+      label: q.label || '',
       full_question: q.question,
       verified_count: qClaims.length,
-      is_thin: isThin,
+      state: stateName,
+      reason: reason,
+      counts: lStat.counts || {},
+      is_thin: isThin || stateName === 'empty' || stateName === 'error',
       thin_label: isThin ? 'not enough proof found' : '',
       notes: notes
     };
@@ -2311,14 +2429,21 @@ function renderFindingsBoard(r) {
       </article>
     `).join('');
 
+    const emptyNotice = `
+      <div class="lane-empty-notice" role="status">
+        <span class="empty-title">⚠️ not enough proof found</span>
+        <p class="empty-reason">${esc(lane.reason || 'No verified claims found for this sub-question')}</p>
+      </div>
+    `;
+
     return `
       <section class="board-lane" aria-label="${esc(lane.full_question || lane.title)}">
         <div class="lane-header">
-          <span class="lane-title">${esc(lane.title)}</span>
+          <span class="lane-title" title="${esc(lane.full_question || '')}" aria-label="${esc(lane.full_question || '')}" tabindex="0">${esc(lane.title)}</span>
           ${thinBadge}
         </div>
         <div class="lane-notes">
-          ${notesHtml || '<div style="color:var(--muted);font-size:12px;font-style:italic;">No verified claims pinned yet.</div>'}
+          ${notesHtml || emptyNotice}
         </div>
       </section>
     `;
