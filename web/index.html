@@ -724,6 +724,7 @@ h1.hero {
 .log-tag.verifier { color: #059669; }
 .log-tag.coverage { color: var(--warn); }
 .log-tag.synthesizer { color: #d97706; }
+.log-tag.relevance { color: #64748b; font-weight: 500; }
 .log-tag.mesh, .log-tag.openrouter { color: #64748b; font-weight: 500; }
 .log-tag.error { color: var(--bad); }
 
@@ -2088,6 +2089,12 @@ function handleEvent(ev) {
   else if (step === 'draft' && kind === 'no_evidence') {
     addLog('drafter', `[${esc(p.subq)}] No evidence found to draft claims`, 'warn');
   }
+  else if (step === 'relevance' && kind === 'filtered') {
+    const dropped = p.dropped || 0;
+    if (dropped > 0) {
+      addLog('relevance', `relevance: filtered ${dropped} off-topic claim${dropped === 1 ? '' : 's'} (${esc(p.subq || '')})`);
+    }
+  }
   else if (step === 'verify' && kind === 'verdict') {
     applyVerdict(p.cid, p.status, p.reason);
     const cls = p.status === 'verified' ? 'ok' : p.status === 'rejected' ? 'bad' : 'warn';
@@ -2458,6 +2465,23 @@ function loadDecisionTrail() {
           html += `<div>• <span style="color:var(--muted)">"${esc(s)}"</span> (missing claim citation)</div>`;
         });
         html += `</div>`;
+      }
+
+      if (data.filtered_count || (data.filtered && data.filtered.length)) {
+        const fCount = data.filtered_count || data.filtered.length;
+        html += `<details class="trail-group trail-filtered" style="margin-top:12px; border:1px dashed var(--line); border-radius:6px; padding:10px 12px; background:var(--surface-2);">
+          <summary class="trail-group-title" style="cursor:pointer; color:var(--muted); font-weight:600; outline:none; user-select:none;">
+            Filtered as off-topic (${fCount})
+          </summary>
+          <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">`;
+        if (data.filtered && data.filtered.length) {
+          data.filtered.forEach(c => {
+            html += `<div>• <b>${esc(c.cid)}</b>: <del style="color:var(--muted)">${esc(c.text)}</del><br><span style="color:var(--muted); font-size:11.5px; margin-left:14px;">Reason: ${esc(c.reason || 'off_topic')}</span></div>`;
+          });
+        } else {
+          html += `<div style="font-size:12px; color:var(--muted);">${fCount} claim(s) filtered out before verification.</div>`;
+        }
+        html += `</div></details>`;
       }
 
       body.innerHTML = html || '<div>No trail entries recorded.</div>';

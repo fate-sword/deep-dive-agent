@@ -14,6 +14,7 @@ TAG_TO_ROLE: dict[str, str] = {
     "researcher_refine": "planner",
     "drafter": "drafter",
     "verifier": "verifier",
+    "relevance": "verifier",
     "contradictor": "verifier",
     "synthesizer": "synthesizer",
     "followup": "synthesizer",
@@ -42,6 +43,8 @@ class Settings:
     research_workers: int = 3
     llm_concurrency: int = 4
     llm_provider: str = "mesh"  # "mesh" | "openrouter"
+    relevance_model: str = ""
+    show_filtered_in_trail: bool = True
     llm_extra_body: dict[str, Any] = field(default_factory=dict)
     openrouter_fallback_models: list[str] = field(default_factory=list)
     role_models: dict[str, str] = field(default_factory=dict)
@@ -109,11 +112,16 @@ def get_settings() -> Settings:
         base_url = os.getenv("MESH_BASE_URL", "https://api.meshapi.ai/v1")
         api_key = os.getenv("MESH_API_KEY", "")
 
+    relevance_model = os.getenv("MESH_RELEVANCE_MODEL") or os.getenv(f"{p_upper}_MODEL_RELEVANCE") or role_models.get("verifier", default_model)
+    show_filtered = os.getenv("SHOW_FILTERED_IN_TRAIL", "1").lower() in ("1", "true", "yes")
+
     return Settings(
         api_key=api_key,
         base_url=base_url,
         model=default_model,
         verifier_model=role_models.get("verifier", default_model),
+        relevance_model=relevance_model,
+        show_filtered_in_trail=show_filtered,
         max_loops=int(os.getenv("MAX_LOOPS", "2")),
         min_verified_per_subq=int(os.getenv("MIN_VERIFIED_PER_SUBQ", "2")),
         pages_per_subq=int(os.getenv("PAGES_PER_SUBQ", "4")),

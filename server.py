@@ -272,12 +272,15 @@ def followup_run(run_id: str, payload: dict):
 @app.get("/api/runs/{run_id}/trail")
 def decision_trail(run_id: str):
     if run_id.startswith("sample") or run_id == "sample":
+        f_list = SAMPLE.get("report", {}).get("filtered", [])
         return {
             "run_id": "sample",
             "events": SAMPLE.get("events", []),
             "accepted": SAMPLE.get("report", {}).get("accepted", []),
             "unverified": SAMPLE.get("report", {}).get("unverified", []),
             "rejected": SAMPLE.get("report", {}).get("rejected", []),
+            "filtered": f_list if settings.show_filtered_in_trail else [],
+            "filtered_count": len(f_list),
             "dropped_sentences": SAMPLE.get("report", {}).get("dropped_sentences", []),
             "contradictions": SAMPLE.get("report", {}).get("contradictions", []),
         }
@@ -285,6 +288,7 @@ def decision_trail(run_id: str):
     store = RunStore(settings.db_path)
     events = store.load_events(run_id)
     report = store.load_report(run_id)
+    filtered = store.load_filtered_claims(run_id)
     if not events and not report:
         raise HTTPException(404, "Decision trail not found")
 
@@ -294,6 +298,8 @@ def decision_trail(run_id: str):
         "accepted": report.get("accepted", []) if report else [],
         "unverified": report.get("unverified", []) if report else [],
         "rejected": report.get("rejected", []) if report else [],
+        "filtered": filtered if settings.show_filtered_in_trail else [],
+        "filtered_count": len(filtered),
         "dropped_sentences": report.get("dropped_sentences", []) if report else [],
         "contradictions": report.get("contradictions", []) if report else [],
     }

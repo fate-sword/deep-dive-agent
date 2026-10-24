@@ -34,7 +34,7 @@ class FakeLLM:
             return {"queries": ["gamma regulation rules"]}
         if tag == "drafter":
             ids = re.findall(r"^\[(E\d+)\]", user, re.M)
-            if "prices" in user.split("\n")[0]:
+            if "prices" in user.split("\n")[0] or "prices" in user:
                 e = ids[0]
                 return {"claims": [
                     {"text": "Battery pack prices fell 20% in 2024.", "evidence_ids": [e]},
@@ -45,6 +45,9 @@ class FakeLLM:
                     {"text": "Totally uncited claim.", "evidence_ids": ["E999"]}]}    # bad id -> no source
             return {"claims": [{"text": "New recycling rules raise compliance costs.", "evidence_ids": [ids[0]]},
                                {"text": "Non-compliant firms face fines.", "evidence_ids": [ids[0]]}]}
+        if tag == "relevance":
+            cids = re.findall(r"\[(temp_[^\]]+)\]", user)
+            return {"evaluations": [{"cid": cid, "relevance": "direct", "reason": "direct answer"} for cid in cids]}
         if tag == "verifier":
             claim = re.search(r"CLAIM: (.*)", user).group(1)
             passage = re.search(r"\[E\d+\] (.{60})", user).group(1)

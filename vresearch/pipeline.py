@@ -8,11 +8,12 @@ from typing import Callable, TypedDict
 from urllib.parse import urlparse
 
 from langgraph.graph import END, StateGraph
+from rank_bm25 import BM25Okapi, BM25Plus
 
 from . import agents
 from .board import build_findings_board
 from .config import Settings, get_settings
-from .ingest import DocIndex, chunk_text, rank_passages
+from .ingest import DocIndex, chunk_text, filter_and_rank_passages, rank_passages, tokenize
 from .llm import LLM
 from .report import SourceRegistry, ground_text
 from .search import fetch_page, web_search
@@ -25,6 +26,7 @@ class State(TypedDict, total=False):
     subqs: list
     evidence: list
     claims: list
+    filtered_claims: list
     focus: list
     loop: int
     thin: list
@@ -68,13 +70,13 @@ def build_graph(ctx: Ctx):
             ctx.log("plan", "fallback", {"error": str(e)}, "Planner: upstream provider rate-limited, using grounded heuristic decomposition")
             q_clean = state["question"].strip()
             subqs = [
-                {"id": "Q1", "question": f"Current market drivers and core dynamics of {q_clean}", "queries": [f"{q_clean} overview demand 2026", f"{q_clean} market drivers"], "tried": []},
-                {"id": "Q2", "question": f"Key supply chain, material, and operational bottlenecks for {q_clean}", "queries": [f"{q_clean} supply chain risks", f"{q_clean} bottlenecks shortages 2026"], "tried": []},
-                {"id": "Q3", "question": f"Technological, substitution, and competitive risks for {q_clean}", "queries": [f"{q_clean} technology challenges competition", f"{q_clean} substitution risks"], "tried": []},
-                {"id": "Q4", "question": f"Regulatory, policy, environmental, and compliance risks surrounding {q_clean}", "queries": [f"{q_clean} regulations policy 2026", f"{q_clean} tariffs compliance standards"], "tried": []},
+                {"id": "Q1", "label": "market drivers", "question": f"Current market drivers and core dynamics of {q_clean}", "answer_spec": f"Names specific market dynamics, drivers, and growth figures for {q_clean}.", "queries": [f"{q_clean} overview demand 2026", f"{q_clean} market drivers"], "tried": []},
+                {"id": "Q2", "label": "supply bottlenecks", "question": f"Key supply chain, material, and operational bottlenecks for {q_clean}", "answer_spec": f"Details concrete supply disruptions, shortages, and material risks for {q_clean}.", "queries": [f"{q_clean} supply chain risks", f"{q_clean} bottlenecks shortages 2026"], "tried": []},
+                {"id": "Q3", "label": "tech and competition", "question": f"Technological, substitution, and competitive risks for {q_clean}", "answer_spec": f"Identifies specific competing alternatives, technology hurdles, and substitution threats for {q_clean}.", "queries": [f"{q_clean} technology challenges competition", f"{q_clean} substitution risks"], "tried": []},
+                {"id": "Q4", "label": "regulations and policy", "question": f"Regulatory, policy, environmental, and compliance risks surrounding {q_clean}", "answer_spec": f"Cites specific regulatory standards, legal restrictions, or policy deadlines for {q_clean}.", "queries": [f"{q_clean} regulations policy 2026", f"{q_clean} tariffs compliance standards"], "tried": []},
             ]
         ctx.log("plan", "subquestions", {"sub_questions": subqs}, f"Planner: {len(subqs)} sub-questions")
-        return {"subqs": subqs, "evidence": [], "claims": [], "loop": 0, "focus": [q["id"] for q in subqs]}
+        return {"subqs": subqs, "evidence": [], "claims": [], "filtered_claims": [], "loop": 0, "focus": [q["id"] for q in subqs]}
 
     def research_node(state: State):
         evidence, subqs, loop = list(state["evidence"]), [dict(q) for q in state["subqs"]], state["loop"]
@@ -101,14 +103,23 @@ def build_graph(ctx: Ctx):
             else:
                 have = " | ".join(c["text"][:80] for c in state["claims"]
                                   if c["subq_id"] == q["id"] and c["status"] == "verified")
+                dropped_c = [c.get("text", "") for c in state.get("filtered_claims", []) if c.get("subq_id") == q["id"]]
+                used_doms = {urlparse(e["url"]).netloc.replace("www.", "") for e in evidence if e["subq_id"] == q["id"]}
+                missing = f"Specific answers satisfying: {q.get('answer_spec', '')}"
                 try:
-                    queries = agents.refine_queries(ctx.llm, q, have)
+                    queries = agents.refine_queries(ctx.llm, q, have, missing_info=missing, dropped_topics=dropped_c, used_domains=list(used_doms))
                 except Exception:
                     queries = q.get("queries") or [q["question"]]
             q["tried"] = q["tried"] + queries
             results = []
             for query in queries:
-                found = ctx.search_fn(query, s.results_per_query)
+                search_kwargs = {}
+                if loop > 0:
+                    search_kwargs["search_depth"] = "advanced"
+                try:
+                    found = ctx.search_fn(query, s.results_per_query, **search_kwargs)
+                except TypeError:
+                    found = ctx.search_fn(query, s.results_per_query)
                 provider = "ddg"
                 if found and isinstance(found[0], dict) and "provider" in found[0]:
                     provider = found[0]["provider"]
@@ -126,7 +137,35 @@ def build_graph(ctx: Ctx):
                 with evidence_lock:
                     if url not in seen_urls and url not in uniq:
                         uniq[url] = r
-            ranked = sorted(uniq.values(), key=lambda r: score_source(r["url"]), reverse=True)[: s.pages_per_subq]
+
+            # Rank search result candidates by lexical match against question + spec + queries with bounded quality
+            subq_target = q["question"] + " " + q.get("answer_spec", "") + " " + " ".join(queries)
+            target_tokens = tokenize(subq_target) or ["_"]
+            cand_list = list(uniq.values())
+            if cand_list:
+                cand_texts = [tokenize((r.get("title") or "") + " " + (r.get("snippet") or "")) or ["_"] for r in cand_list]
+                bm_cand = BM25Plus(cand_texts)
+                scores = bm_cand.get_scores(target_tokens)
+                scored_cands = []
+                for idx, r in enumerate(cand_list):
+                    s_rel = float(scores[idx]) if len(scores) > idx else 0.0
+                    qual = score_source(r["url"])
+                    q_norm = max(0.0, min(1.0, (qual - 0.5) / 0.5))
+                    combined = (s_rel + 0.1) * (1.0 + 0.3 * q_norm)
+                    scored_cands.append((combined, r))
+                scored_cands.sort(key=lambda x: x[0], reverse=True)
+                ranked = []
+                dom_counts = {}
+                for _, r in scored_cands:
+                    d = urlparse(r["url"]).netloc.replace("www.", "").lower()
+                    if dom_counts.get(d, 0) < 2 or len(ranked) + len(scored_cands) <= s.pages_per_subq:
+                        dom_counts[d] = dom_counts.get(d, 0) + 1
+                        ranked.append(r)
+                    if len(ranked) >= s.pages_per_subq:
+                        break
+            else:
+                ranked = []
+
             with ThreadPoolExecutor(max_workers=4) as fetch_pool:
                 pages = list(fetch_pool.map(lambda r: ctx.fetch_fn(r["url"]), ranked))
             for r, text in zip(ranked, pages):
@@ -135,6 +174,8 @@ def build_graph(ctx: Ctx):
                 if len(text) > 300:
                     for p in rank_passages(chunk_text(text), q["question"] + " " + " ".join(queries), 3):
                         add(q["id"], r["url"], r["title"], p[:1200], "web", queries[0])
+                elif len(text.strip()) >= 50:
+                    add(q["id"], r["url"], r["title"], text.strip()[:1200], "web", queries[0])
                 elif r.get("snippet"):
                     add(q["id"], r["url"], r["title"], r["snippet"], "snippet", queries[0])
             if ctx.doc_index:
@@ -156,40 +197,112 @@ def build_graph(ctx: Ctx):
 
     def draft_node(state: State):
         claims = list(state["claims"])
+        filtered_claims_list = list(state.get("filtered_claims", []))
         claims_lock = threading.Lock()
         known = {c["text"].lower() for c in claims}
         focus_qs = [q for q in state["subqs"] if q["id"] in state["focus"]]
 
         def draft_subq(q):
-            ev = sorted([e for e in state["evidence"] if e["subq_id"] == q["id"]],
-                        key=lambda e: e["quality"], reverse=True)[:8]
+            q_ev = [e for e in state["evidence"] if e["subq_id"] == q["id"]]
+            # FIX 2: Passage relevance filter (BM25 over question + answer_spec + queries with bounded quality)
+            ev = filter_and_rank_passages(q_ev, q, k=8)
             if not ev:
-                ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no evidence found")
+                ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no relevant evidence found")
                 return
+
             existing = [c["text"] for c in claims if c["subq_id"] == q["id"] and c["status"] != "rejected"]
             try:
-                drafted = agents.draft_claims(ctx.llm, q, ev, existing)
+                drafted = agents.draft_claims(ctx.llm, q, ev, existing, main_question=state["question"])
             except Exception as e:
-                ctx.log("draft", "fallback", {"subq": q["id"], "error": str(e)}, f"Drafter [{q['id']}]: rate-limited, extracting grounded claims")
+                ctx.log("draft", "fallback", {"subq": q["id"], "error": str(e)}, f"Drafter [{q['id']}]: drafter error, extracting grounded sentences")
                 drafted = []
-                for passage in ev[:4]:
+                for passage in ev[:3]:
                     raw_sents = re.split(r"(?<=[.!?])\s+", passage.get("text", ""))
                     valid_sents = [s.strip() for s in raw_sents if 35 <= len(s.strip()) <= 200][:2]
                     for s_text in valid_sents:
-                        drafted.append({"text": s_text, "evidence_ids": [passage["eid"]]})
-            items = []
-            for c in drafted:
-                txt = c["text"].lower()
+                        drafted.append({"text": agents.sanitize_claim_text(s_text), "evidence_ids": [passage["eid"]]})
+
+            if not drafted:
+                ctx.log("draft", "no_evidence", {"subq": q["id"]}, f"Drafter [{q['id']}]: no claims drafted per answer spec")
+                return
+
+            # Temporary candidate claims for relevance gating
+            temp_candidates = []
+            for idx, c in enumerate(drafted):
+                txt = agents.sanitize_claim_text(c.get("text") or "")
+                if not txt or len(txt) < 15 or not re.search(r"[a-zA-Z]{3,}", txt):
+                    continue
+                temp_candidates.append({
+                    "cid": f"temp_{q['id']}_{idx+1}",
+                    "text": txt,
+                    "evidence_ids": c.get("evidence_ids", [])
+                })
+
+            if not temp_candidates:
+                return
+
+            # FIX 4: CLAIM RELEVANCE GATE (runs BEFORE verification, drops off_topic claims immediately)
+            relevance_model = getattr(s, "relevance_model", s.verifier_model)
+            evals = agents.evaluate_claim_relevance(ctx.llm, q, temp_candidates, model=relevance_model)
+            eval_by_cid = {e["cid"]: e for e in evals}
+
+            direct_candidates = []
+            dropped_candidates = []
+            for c in temp_candidates:
+                ev_res = eval_by_cid.get(c["cid"], {"relevance": "off_topic", "reason": "unspecified"})
+                if ev_res.get("relevance") == "direct":
+                    direct_candidates.append(c)
+                else:
+                    dropped_candidates.append({
+                        "cid": c["cid"],
+                        "subq_id": q["id"],
+                        "text": c["text"],
+                        "evidence_ids": c["evidence_ids"],
+                        "reason": ev_res.get("reason", "off_topic")
+                    })
+
+            # Emit relevance/filtered additive event
+            ctx.log("relevance", "filtered", {
+                "subq": q["id"],
+                "kept": len(direct_candidates),
+                "dropped": len(dropped_candidates)
+            }, f"relevance: filtered {len(dropped_candidates)} off-topic claims ({q['id']})")
+
+            # Audit: Save dropped claims to SQLite
+            for dc in dropped_candidates:
                 with claims_lock:
-                    if txt in known:
+                    filtered_cid = f"F{len(filtered_claims_list) + 1}"
+                    dc_stored = {**dc, "cid": filtered_cid}
+                    filtered_claims_list.append(dc_stored)
+                    ctx.store.save_filtered_claim(ctx.run_id, dc_stored)
+
+            # Assign permanent CIDs and save ONLY direct claims
+            items = []
+            for c in direct_candidates:
+                txt_lower = c["text"].lower()
+                with claims_lock:
+                    if txt_lower in known:
                         continue
-                    known.add(txt)
+                    known.add(txt_lower)
                     cid = f"C{len(claims) + 1}"
-                    cl = {"cid": cid, "subq_id": q["id"], "text": c["text"],
-                          "evidence_ids": c["evidence_ids"], "status": "pending", "verdict": "", "reason": "", "quote": ""}
+                    cl = {
+                        "cid": cid,
+                        "subq_id": q["id"],
+                        "text": c["text"],
+                        "evidence_ids": c["evidence_ids"],
+                        "status": "pending",
+                        "verdict": "",
+                        "reason": "",
+                        "quote": ""
+                    }
                     claims.append(cl)
-                    items.append({"cid": cl["cid"], "text": cl["text"], "sources": _domains(cl["evidence_ids"], state["evidence"])})
+                    items.append({
+                        "cid": cl["cid"],
+                        "text": cl["text"],
+                        "sources": _domains(cl["evidence_ids"], state["evidence"])
+                    })
                     ctx.store.save_claim(ctx.run_id, cl)
+
             with claims_lock:
                 n = sum(1 for c in claims if c["subq_id"] == q["id"])
             ctx.log("draft", "claims", {"subq": q["id"], "claims": n, "items": items}, f"Drafter [{q['id']}]: {n} claims drafted")
@@ -203,7 +316,7 @@ def build_graph(ctx: Ctx):
             for q in focus_qs:
                 draft_subq(q)
 
-        return {"claims": claims}
+        return {"claims": claims, "filtered_claims": filtered_claims_list}
 
     def verify_node(state: State):
         claims = [dict(c) for c in state["claims"]]
@@ -323,10 +436,16 @@ def build_graph(ctx: Ctx):
             contra.append({**x, "claims": [{"cid": cid, "text": by_id[cid]["text"], "sources": nums[cid]}
                                            for cid in nums]})
         total = len(state["claims"])
+        filtered_claims_count = len(state.get("filtered_claims", []))
+        total_drafted = total + filtered_claims_count
+        relevance_rate = round(total / max(1, total_drafted), 3) if total_drafted else 1.0
         cnt = {k: sum(1 for c in state["claims"] if c["status"] == k) for k in ("verified", "unverified", "rejected")}
         metrics = {
             "sub_questions": len(state["subqs"]), "sub_questions_covered": len(state["subqs"]) - len(thin),
             "claims_total": total, **{f"claims_{k}": v for k, v in cnt.items()},
+            "relevance_rate": relevance_rate,
+            "claims_drafted": total_drafted,
+            "claims_filtered_off_topic": filtered_claims_count,
             "groundedness": round(cnt["verified"] / total, 3) if total else 0.0,
             "coverage": round((len(state["subqs"]) - len(thin)) / len(state["subqs"]), 3),
             "loops": state["loop"], "contradictions": len(contradictions),
@@ -339,10 +458,13 @@ def build_graph(ctx: Ctx):
         report = {
             "run_id": ctx.run_id, "question": state["question"], "summary": summary, "sections": sections,
             "contradictions": contra, "sources": registry.bibliography(), "metrics": metrics,
-            "sub_questions": [{"id": q["id"], "question": q["question"], "queries_tried": q["tried"]} for q in state["subqs"]],
+            "sub_questions": [{"id": q["id"], "label": q.get("label", ""), "question": q["question"],
+                               "answer_spec": q.get("answer_spec", ""), "queries_tried": q.get("tried", [])}
+                              for q in state["subqs"]],
             "accepted": [{**c, "source_numbers": registry.numbers_for_claim(c)} for c in state["claims"] if c["status"] == "verified"],
             "unverified": [{**c, "source_numbers": registry.numbers_for_claim(c)} for c in state["claims"] if c["status"] == "unverified"],
             "rejected": [c for c in state["claims"] if c["status"] == "rejected"],
+            "filtered": state.get("filtered_claims", []),
             "dropped_sentences": dropped_all,
         }
         report["board"] = build_findings_board(report)

@@ -24,6 +24,9 @@ class RunStore:
                 CREATE TABLE IF NOT EXISTS claims(run_id TEXT, cid TEXT, subq_id TEXT, text TEXT,
                     evidence_ids TEXT, status TEXT, verdict TEXT, reason TEXT, quote TEXT,
                     PRIMARY KEY(run_id, cid));
+                CREATE TABLE IF NOT EXISTS filtered_claims(run_id TEXT, cid TEXT, subq_id TEXT, text TEXT,
+                    evidence_ids TEXT, reason TEXT, ts REAL,
+                    PRIMARY KEY(run_id, cid));
                 """
             )
 
@@ -53,6 +56,18 @@ class RunStore:
             c.execute("INSERT OR REPLACE INTO claims VALUES(?,?,?,?,?,?,?,?,?)",
                       (run_id, cl["cid"], cl["subq_id"], cl["text"], json.dumps(cl["evidence_ids"]),
                        cl["status"], cl.get("verdict", ""), cl.get("reason", ""), cl.get("quote", "")))
+
+    def save_filtered_claim(self, run_id: str, cl: dict) -> None:
+        with self._lock, self._c() as c:
+            c.execute("INSERT OR REPLACE INTO filtered_claims VALUES(?,?,?,?,?,?,?)",
+                      (run_id, cl["cid"], cl["subq_id"], cl["text"],
+                       json.dumps(cl.get("evidence_ids", [])), cl.get("reason", "off_topic"), time.time()))
+
+    def load_filtered_claims(self, run_id: str) -> list[dict]:
+        with self._c() as c:
+            rows = c.execute("SELECT * FROM filtered_claims WHERE run_id=? ORDER BY CAST(SUBSTR(cid,2) AS INTEGER)",
+                             (run_id,)).fetchall()
+        return [{**dict(r), "evidence_ids": json.loads(r["evidence_ids"] or "[]")} for r in rows]
 
     def finish(self, run_id: str, report: dict, status: str = "done") -> None:
         with self._lock, self._c() as c:

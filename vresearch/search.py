@@ -18,7 +18,7 @@ def get_tavily_credits_used() -> int:
         return _tavily_credits_used
 
 
-def _tavily(query: str, n: int) -> list[dict]:
+def _tavily(query: str, n: int, search_depth: str = "basic") -> list[dict]:
     global _tavily_credits_used
     api_key = os.getenv("TAVILY_API_KEY", "").strip()
     if not api_key:
@@ -34,7 +34,7 @@ def _tavily(query: str, n: int) -> list[dict]:
         json={
             "api_key": api_key,
             "query": query,
-            "search_depth": "basic",
+            "search_depth": search_depth or "basic",
             "max_results": n,
             "include_raw_content": False,
             "include_answer": False,
@@ -102,7 +102,7 @@ def _wikipedia(query: str, n: int) -> list[dict]:
     return out
 
 
-def web_search(query: str, n: int = 6) -> list[dict]:
+def web_search(query: str, n: int = 6, *, search_depth: str = "basic") -> list[dict]:
     """Search using Tavily first, falling back to DuckDuckGo, then Wikipedia."""
     providers = []
     if os.getenv("TAVILY_API_KEY"):
@@ -111,7 +111,10 @@ def web_search(query: str, n: int = 6) -> list[dict]:
 
     for fn in providers:
         try:
-            res = fn(query, n)
+            if fn == _tavily:
+                res = fn(query, n, search_depth=search_depth)
+            else:
+                res = fn(query, n)
             if res:
                 return res
         except Exception:

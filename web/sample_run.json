@@ -6,8 +6,8 @@
       "kind": "subquestions",
       "payload": {
         "sub_questions": [
-          { "id": "Q1", "question": "How fast is EV battery demand growing?", "queries": ["battery demand growth forecast 2026"], "tried": [] },
-          { "id": "Q2", "question": "What regulatory risks and compliance costs exist?", "queries": ["battery regulation compliance penalties"], "tried": [] }
+          { "id": "Q1", "label": "demand growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "queries": ["battery demand growth forecast 2026"], "tried": [] },
+          { "id": "Q2", "label": "regulatory risks", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "queries": ["battery regulation compliance penalties"], "tried": [] }
         ]
       }
     },
@@ -226,8 +226,8 @@
       { "n": 3, "title": "Clean Energy Regulatory Directive on Battery Recycling", "url": "https://sample-agency.gov", "quality": 1.0, "tier": "primary", "kind": "web" }
     ],
     "sub_questions": [
-      { "id": "Q1", "question": "How fast is EV battery demand growing?", "queries_tried": ["battery demand growth forecast 2026"] },
-      { "id": "Q2", "question": "What regulatory risks and compliance costs exist?", "queries_tried": ["battery regulation compliance penalties", "battery producer extended responsibility recycling audit"] }
+      { "id": "Q1", "label": "demand growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "queries_tried": ["battery demand growth forecast 2026"] },
+      { "id": "Q2", "label": "regulatory risks", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "queries_tried": ["battery regulation compliance penalties", "battery producer extended responsibility recycling audit"] }
     ],
     "accepted": [
       { "cid": "C1", "subq_id": "Q1", "text": "Analysts expect EV battery demand to keep growing steadily through 2030.", "status": "verified", "verdict": "supported", "reason": "stated in market survey", "quote": "demand to keep growing steadily through 2030", "evidence_ids": ["E1"], "source_numbers": [1] },
@@ -240,6 +240,9 @@
     ],
     "rejected": [
       { "cid": "C3", "subq_id": "Q1", "text": "Global battery demand will triple within two months.", "status": "rejected", "verdict": "unsupported", "reason": "source does not say demand will triple in two months", "quote": "(rejected)", "evidence_ids": ["E2"], "source_numbers": [] }
+    ],
+    "filtered": [
+      { "cid": "F1", "subq_id": "Q1", "text": "Consumer sentiment on interior car design improved by 12%.", "reason": "off_topic" }
     ],
     "dropped_sentences": [],
     "metrics": {
