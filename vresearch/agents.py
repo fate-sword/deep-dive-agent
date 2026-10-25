@@ -84,6 +84,7 @@ Return JSON: {"queries":["...","..."]}"""
 DRAFTER_SYS = """You are the DRAFTER in a precision research system. Write 3-6 atomic factual claims that DIRECTLY answer the sub-question according to the ANSWER SPECIFICATION, using ONLY the
 evidence passages provided. Hard rules:
 - Every claim must directly answer the sub-question and satisfy the ANSWER SPECIFICATION.
+- Every claim must be a complete declarative statement of a finding, figure, mechanism, comparison or conclusion that the passage asserts. Do NOT write claims that (a) are questions, (b) state what a report, paper, study or author examines, investigates, analyses, aims to do or asks, or (c) merely announce a topic or section. If the only relevant sentences are of those kinds, return {"claims": []}.
 - Ignore passages that are only general background, peripheral regulation, disclaimers, or warnings unrelated to the core ask.
   Negative example: If the question asks which natural supplements support weight loss, an FDA warning about an unrelated toxic plant or generic advice to 'eat healthy' is NOT an answer. Do NOT draft claims about it.
 - If no passage directly answers the sub-question according to the answer specification, return an empty list: {"claims": []}.
