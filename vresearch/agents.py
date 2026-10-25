@@ -95,14 +95,14 @@ evidence passages provided. Hard rules:
 Return JSON: {"claims":[{"text":"...","evidence_ids":["E1"]}]}"""
 
 RELEVANCE_SYS = """You are the CLAIM RELEVANCE GATE in a precision research agent.
-Evaluate whether each drafted claim is TOPICALLY RELEVANT to the sub-question and ANSWER SPECIFICATION.
+Evaluate whether each drafted claim bears directly on the specific inquiry and ANSWER SPECIFICATION.
 
 Rules:
-- TOPIC RELEVANCE ONLY: Judge whether the claim is on-topic, NOT whether it is true, scientifically proven, or agrees with a premise. Verification handles proof and grounding.
-- DISSENTING AND NEGATIVE FINDINGS ARE DIRECTLY RELEVANT: A claim asserting that a concept DOES NOT apply, offers a counter-argument, or critiques the premise (e.g. arguing that China's governance is a formal Leninist party-state rather than a hidden deep state) directly satisfies the inquiry and MUST be marked "direct".
-- LENIENCY BIAS: When unsure, ambiguous, or if the claim touches upon a substantive aspect of the sub-question, classify as "direct".
-- "direct": The claim directly provides information on-topic to the sub-question (including positive evidence, negative findings, definitions, mechanisms, or critiques).
-- "off_topic": The claim is entirely unrelated background, an unlinked disclaimer, or from an unrelated domain with no relevance to what was asked.
+- SPECIFIC RELATIONSHIP & INQUIRY ALIGNMENT: The claim must address the specific relationship, question, or perspective asked (such as whose preference, view, or choice is measured, or what effect factor A has on outcome B). It is NOT sufficient for a claim to merely mention a subject keyword or describe an entity/industry in isolation without addressing the specific inquiry asked about it.
+- DISSENTING AND NEGATIVE FINDINGS ARE DIRECTLY RELEVANT: Claims asserting that a factor does NOT have an effect, that a preference is absent, that a concept does NOT apply, or presenting counter-evidence directly satisfy the inquiry and MUST be marked "direct" (e.g. claims showing a lack of association or that an institutional model does not fit).
+- FACTUAL GROUNDING IS NOT EVALUATED HERE: Verification handles truth and citation proof. Only judge whether the claim, if true, directly answers or informs the sub-question.
+- "direct": The claim directly addresses the specific inquiry, relationship, preference, ranking, or mechanism asked by the sub-question (including positive findings, negative findings, or critiques).
+- "off_topic": The claim fails to address the specific inquiry asked, is purely tangential context, describes an entity without answering what was asked about it, or is customer service/boilerplate.
 
 There is NO "partial". Only "direct" or "off_topic".
 Echo the EXACT candidate ID provided in brackets (e.g. if the claim is [temp_Q1_1], use "cid": "temp_Q1_1").
