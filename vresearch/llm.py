@@ -1,5 +1,6 @@
 """Single entry point for every LLM call. Supports Mesh API gateway and dev-only OpenRouter."""
 import json
+import os
 import random
 import re
 import threading
@@ -29,15 +30,22 @@ def extract_json(text: str) -> Any:
     except Exception:
         pass
 
-    # Try extracting from markdown code block fences: ```json ... ``` or ``` ... ```
-    fence_match = re.search(r"```(?:json)?\s*([\{\[].*?[\}\]])\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-    if fence_match:
+    # Find all code fences ```json ... ``` and try to parse each, prioritizing dicts with known keys or largest JSON
+    fence_matches = re.findall(r"```(?:json)?\s*([\{\[].*?[\}\]])\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    for fm in reversed(fence_matches):
         try:
-            return json.loads(fence_match.group(1).strip())
+            val = json.loads(fm.strip())
+            if isinstance(val, dict):
+                return val
+        except Exception:
+            pass
+    for fm in fence_matches:
+        try:
+            return json.loads(fm.strip())
         except Exception:
             pass
 
-    # Strip leading/trailing code fences if present
+    # Strip code fences if whole text is fenced
     cleaned = text
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -47,32 +55,95 @@ def extract_json(text: str) -> Any:
         except Exception:
             pass
 
-    # Bracket matching search
-    starts = sorted(i for i in (text.find("{"), text.find("[")) if i != -1)
-    for start in starts:
-        open_c = text[start]
-        close_c = "}" if open_c == "{" else "]"
-        depth, in_str, esc = 0, False, False
-        for i in range(start, len(text)):
-            ch = text[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif ch == "\\":
-                    esc = True
+    # Search for JSON blocks in text: collect all valid JSON candidate structures
+    candidates = []
+    for open_c, close_c in (("{", "}"), ("[", "]")):
+        idx = 0
+        while True:
+            start = text.find(open_c, idx)
+            if start == -1:
+                break
+            depth, in_str, esc = 0, False, False
+            for i in range(start, len(text)):
+                ch = text[i]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
                 elif ch == '"':
-                    in_str = False
-            elif ch == '"':
-                in_str = True
-            elif ch == open_c:
-                depth += 1
-            elif ch == close_c:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start : i + 1])
-                    except Exception:
+                    in_str = True
+                elif ch == open_c:
+                    depth += 1
+                elif ch == close_c:
+                    depth -= 1
+                    if depth == 0:
+                        candidate_str = text[start : i + 1]
+                        try:
+                            parsed = json.loads(candidate_str)
+                            candidates.append((parsed, len(candidate_str)))
+                        except Exception:
+                            try:
+                                fixed = re.sub(r",\s*([\}\]])", r"\1", candidate_str)
+                                parsed = json.loads(fixed)
+                                candidates.append((parsed, len(fixed)))
+                            except Exception:
+                                pass
                         break
+            idx = start + 1
+
+    if candidates:
+        dict_candidates = [c for c in candidates if isinstance(c[0], dict)]
+
+        # 1. If any dict candidate has 'sub_questions', 'claims', or 'evaluations', return the largest one
+        key_matches = [c for c in dict_candidates if any(k in c[0] for k in ("sub_questions", "claims", "evaluations", "contradictions"))]
+        if key_matches:
+            return max(key_matches, key=lambda x: x[1])[0]
+
+        # 2. Check list candidates for evaluations or claims
+        list_candidates = [c for c in candidates if isinstance(c[0], list)]
+        for lc in list_candidates:
+            items = lc[0]
+            if items and isinstance(items, list) and isinstance(items[0], dict):
+                if any("cid" in it and "relevance" in it for it in items):
+                    return {"evaluations": items}
+                if any("evidence_ids" in it for it in items):
+                    return {"claims": items}
+
+        # 3. If multiple separate sub-question dicts were generated across blocks, aggregate them
+        q_dicts = [c[0] for c in dict_candidates if "question" in c[0] and ("tag" in c[0] or "label" in c[0] or "id" in c[0])]
+        if len(q_dicts) >= 2:
+            seen = set()
+            deduped = []
+            for qd in q_dicts:
+                key = qd.get("id") or qd.get("question")
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(qd)
+            return {"sub_questions": deduped}
+
+        # 4. Otherwise return the largest dict candidate
+        if dict_candidates:
+            return max(dict_candidates, key=lambda x: x[1])[0]
+
+        # 5. Otherwise return the largest candidate
+        return max(candidates, key=lambda x: x[1])[0]
+
+    # 6. Regex fallback for evaluations if model used markdown list instead of JSON
+    eval_matches = re.findall(
+        r"\[?(temp_[a-zA-Z0-9_-]+)\]?[\s:\-]+(direct|off_topic|relevant|irrelevant)\b(?:[\s:\-]+([^\n\r]+))?",
+        text,
+        re.IGNORECASE
+    )
+    if eval_matches:
+        evals = []
+        for cid, rel, rsn in eval_matches:
+            v = "direct" if "direct" in rel.lower() or "relevant" in rel.lower() else "off_topic"
+            evals.append({"cid": cid, "relevance": v, "reason": (rsn or v).strip()})
+        return {"evaluations": evals}
+
     raise ValueError("no valid JSON found in model output")
 
 
@@ -100,7 +171,10 @@ class LLM:
 
     def chat(self, system: str, user: str, *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int = 2000, tag: str = "") -> str:
-        target_model = model or self.s.get_model_for_tag(tag)
+        if self.provider.name == "mesh":
+            target_model = os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
+        else:
+            target_model = model or self.s.get_model_for_tag(tag)
         if not target_model:
             raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
@@ -123,12 +197,19 @@ class LLM:
             candidates = list(all_candidates)
 
         last: Exception | None = None
-        extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body)
+        extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body) if self.provider.name == "openrouter" else {}
 
         for current_model in candidates:
             extra_body: dict[str, Any] = dict(extra_body_base)
             # Candidate failover is handled cleanly in Python across the candidate chain
             extra_body.pop("models", None)
+
+            # Per-call thinking policy: disable or minimize reasoning overhead for GLM on Mesh
+            if self.provider.name == "mesh" and "glm" in current_model.lower():
+                if any(tag.startswith(prefix) for prefix in ("planner", "researcher_refine", "relevance", "drafter")):
+                    extra_body["reasoning_effort"] = "none"
+                elif "verifier" in tag:
+                    extra_body["reasoning_effort"] = "low"
 
             # Up to 4 attempts for transient upstream pool rate limits (e.g. Phala on XingChen)
             max_attempts = 4 if "xingchen" in current_model.lower() else 2
@@ -149,8 +230,12 @@ class LLM:
                         try:
                             r = self.client.chat.completions.create(**kwargs)
                         except Exception as temp_err:
-                            if "temperature" in str(temp_err).lower():
+                            err_str = str(temp_err).lower()
+                            if "temperature" in err_str:
                                 kwargs.pop("temperature", None)
+                                r = self.client.chat.completions.create(**kwargs)
+                            elif "reasoning" in err_str or "extra_body" in err_str:
+                                kwargs.pop("extra_body", None)
                                 r = self.client.chat.completions.create(**kwargs)
                             else:
                                 raise temp_err
@@ -175,8 +260,6 @@ class LLM:
                         raw_content = ""
                         if msg:
                             raw_content = getattr(msg, "content", "") or ""
-                            if not raw_content and hasattr(msg, "reasoning_content"):
-                                raw_content = getattr(msg, "reasoning_content") or ""
 
                         if not raw_content and attempt < max_attempts - 1:
                             time.sleep(1.0)
@@ -254,12 +337,13 @@ class LLM:
         try:
             return extract_json(raw)
         except ValueError:
+            retry_max_tokens = min(8192, max(max_tokens * 2, 4000))
             raw = self.chat(
                 sys_json,
                 user + "\n\nYour previous reply was not valid JSON. JSON only, no reasoning.",
                 model=model,
                 temperature=0.0,
-                max_tokens=max_tokens,
+                max_tokens=retry_max_tokens,
                 tag=tag + ":retry",
             )
             return extract_json(raw)
