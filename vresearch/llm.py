@@ -206,9 +206,9 @@ class LLM:
 
             # Per-call thinking policy: disable or minimize reasoning overhead for GLM on Mesh
             if self.provider.name == "mesh" and "glm" in current_model.lower():
-                if any(tag.startswith(prefix) for prefix in ("planner", "researcher_refine", "relevance", "drafter")):
+                if any(tag.startswith(prefix) for prefix in ("planner", "researcher_refine", "relevance")):
                     extra_body["reasoning_effort"] = "none"
-                elif "verifier" in tag:
+                elif any(tag.startswith(prefix) for prefix in ("drafter", "verifier")):
                     extra_body["reasoning_effort"] = "low"
 
             # Up to 4 attempts for transient upstream pool rate limits (e.g. Phala on XingChen)

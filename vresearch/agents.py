@@ -23,6 +23,7 @@ CORE GROUNDING & SCOPE DISCIPLINE RULES:
 2. ELIMINATE SCOPE DRIFT: Never introduce peripheral filler angles (such as creator/influencer biographies, online drama, historical origins, or tangential legal/regulatory regimes) unless the user explicitly requested them.
 3. ATOMIC SUB-QUESTION INQUIRY STANDARD (NEVER COMBINE CONCEPTS INTO COMPOUND QUESTIONS):
    - Every sub-question MUST focus on a single, atomic research angle. Never combine conceptual definition and empirical applicability into one sub-question.
+   - NO FALSE-DILEMMA OR META-DEBATE FRAMING: When the user asks for the "main reason", "primary cause", or drivers of a phenomenon, decompose into the distinct causal mechanisms and their empirical effects, or ask how the primary drivers interact and contribute. NEVER frame a sub-question as a meta-debate asking what experts "weigh" or "single out" as a sole winner between co-drivers.
    - Contrast Example:
      * BAD (compound): "How do political scientists define the 'deep state' concept and assess its applicability to China's party-state system?"
      * GOOD (atomic):
@@ -38,7 +39,8 @@ CORE GROUNDING & SCOPE DISCIPLINE RULES:
 6. FINDINGS BOARD LANE LABEL ("label"):
    - A 5-6 word STATEMENT (noun phrase or short statement, NOT a question, NO trailing question mark, preserving question intent).
 7. ANSWER SPECIFICATION ("answer_spec"):
-   - One sentence stating the required factual entities, data points, or scientific measurements needed to satisfy the inquiry.
+   - One sentence stating the factual entities, data points, or causal mechanisms that satisfy the inquiry.
+   - Frame the specification DISJUNCTIVELY (any listed facet, metric, or joint/combined causal finding counts as valid evidence) rather than requiring a single passage to prove every listed facet simultaneously.
 8. SEARCH QUERIES ("queries"):
    - Exactly 2 distinct web-search queries.
    - Format: 3 to 8 plain natural language words naming concrete entities, technical terms, or publication types.
@@ -81,29 +83,41 @@ Rules:
 Today is {date}.
 Return JSON: {"queries":["...","..."]}"""
 
-DRAFTER_SYS = """You are the DRAFTER in a precision research system. Write up to 6 atomic factual claims that DIRECTLY answer the sub-question according to the ANSWER SPECIFICATION, using ONLY the
-evidence passages provided. Zero claims is a correct answer when the passages only give background, methods, motivation or prior-literature statements. Hard rules:
-- Every claim must directly answer the sub-question and satisfy the ANSWER SPECIFICATION.
-- A claim must state a result, figure, comparison, effect or mechanism that a passage asserts. When a passage contains both methods or motivation and results, draft from the results. Do not draft from sentences that only describe a study's data or method, what prior studies did, or what remains unexplored. If only such sentences exist, return {"claims": []}.
-- Ignore passages that are only general background, peripheral regulation, disclaimers, or warnings unrelated to the core ask.
-  Negative example: If the question asks which natural supplements support weight loss, an FDA warning about an unrelated toxic plant or generic advice to 'eat healthy' is NOT an answer. Do NOT draft claims about it.
-- If no passage directly answers the sub-question according to the answer specification, return an empty list: {"claims": []}.
-- Every claim must be directly stated by, or a close paraphrase of, the passages it cites.
-- Cite 1-3 evidence ids per claim (like "E4"). Never cite an id that was not provided.
-- Any number, date or name in a claim must appear in the cited passage.
-- Do NOT add background knowledge. If the evidence cannot support a claim, leave it out; fewer claims is fine.
-- Do not repeat claims listed under ALREADY ESTABLISHED.
+DRAFTER_SYS = """You are the DRAFTER in a precision research system. Write up to 6 atomic, self-contained factual claims that answer the sub-question using ONLY the evidence passages provided.
+
+Hard rules:
+1. PARTIAL & JOINT CAUSATION ARE VALID:
+   - Draft a claim if a passage provides concrete evidence for ANY facet, determinant, metric, or mechanism in the sub-question or ANSWER SPECIFICATION (a single passage does NOT need to cover every item listed in the specification).
+   - When a sub-question asks for a primary driver or compares multiple factors, passages showing that multiple factors operate jointly/simultaneously—or quantifying the effect of any individual factor—DIRECTLY answer the question. Draft them!
+2. STRICT EMPIRICAL SUBSTANCE (NO FLUFF, HEADERS, OR META-STATEMENTS):
+   - Every claim must state a concrete empirical finding, statistic, historical fact, comparison, or causal mechanism asserted by the passage.
+   - NEVER draft document titles, section headers, author/institution bylines, URLs, or bibliographic citations.
+   - NEVER draft study-scope or methodology meta-statements that only announce what a paper investigates without stating its findings (e.g., "This paper examines...", "Numerous studies have used the multidimensional approach to study X...", "Researchers analyzed data from N households to study Y..."). Always extract the actual finding or metric instead.
+   - NEVER draft generic rhetorical commentary or truisms lacking empirical information (e.g., "It is worth looking at Japan's demographics...", "Living longer and healthier lives is generally seen as a good thing.").
+3. SUBJECT & JURISDICTION FIDELITY:
+   - Every claim must be about the exact subject, population, or country asked in the sub-question. Do NOT draft statistics about a different country or region (e.g., Europe or OECD-wide averages) unless the passage explicitly links or compares that figure to the target subject.
+4. SELF-CONTAINED, VERBATIM GROUNDING & CITATION DISCIPLINE:
+   - Every claim must be a complete, self-contained declarative sentence that makes sense on its own without reading the surrounding passage (resolve pronouns like "They", "This mechanism", or "These include" to the explicit noun or subject named in the passage, and never truncate a sentence mid-clause).
+   - Every claim must be directly stated by, or a close paraphrase of, the cited passages.
+   - Cite 1-3 evidence ids per claim (like "E4"). Never cite an id that was not provided.
+   - Every number, percentage, date, or proper noun in a claim MUST appear in the cited passage.
+   - Do not repeat claims listed under ALREADY ESTABLISHED.
+   - Return {"claims": []} ONLY when the passages contain zero empirical facts, mechanisms, or figures relevant to the subject of the sub-question.
 Return JSON: {"claims":[{"text":"...","evidence_ids":["E1"]}]}"""
 
 RELEVANCE_SYS = """You are the CLAIM RELEVANCE GATE in a precision research agent.
 Evaluate whether each drafted claim bears directly on the specific inquiry and ANSWER SPECIFICATION.
 
 Rules:
-- SPECIFIC RELATIONSHIP & INQUIRY ALIGNMENT: The claim must address the specific relationship, question, or perspective asked (such as whose preference, view, or choice is measured, or what effect factor A has on outcome B). It is NOT sufficient for a claim to merely mention a subject keyword or describe an entity/industry in isolation without addressing the specific inquiry asked about it.
-- DISSENTING AND NEGATIVE FINDINGS ARE DIRECTLY RELEVANT: Claims asserting that a factor does NOT have an effect, that a preference is absent, that a concept does NOT apply, or presenting counter-evidence directly satisfy the inquiry and MUST be marked "direct" (e.g. claims showing a lack of association or that an institutional model does not fit).
-- FACTUAL GROUNDING IS NOT EVALUATED HERE: Verification handles truth and citation proof. Only judge whether the claim, if true, directly answers or informs the sub-question.
-- "direct": The claim directly addresses the specific inquiry, relationship, preference, ranking, or mechanism asked by the sub-question (including positive findings, negative findings, or critiques).
-- "off_topic": The claim fails to address the specific inquiry asked, is purely tangential context, describes an entity without answering what was asked about it, or is customer service/boilerplate.
+- SPECIFIC RELATIONSHIP & SUBJECT ALIGNMENT: The claim must address the exact subject/population/country and relationship asked by the sub-question. If the sub-question asks about a specific country (e.g. Japan), a claim that only states a statistic about a different region (e.g. Europe or OECD average) without mentioning or measuring the target country MUST be marked "off_topic".
+- JOINT CAUSATION, DISSENTING, AND NEGATIVE FINDINGS ARE DIRECTLY RELEVANT: Claims showing that multiple factors jointly drive an outcome, that a factor does NOT have an effect, that a preference is absent, or that an institutional model does not fit directly satisfy the inquiry and MUST be marked "direct".
+- REJECT FLUFF, HEADERS, AND METHODOLOGY-ONLY META-CLAIMS: Mark as "off_topic" any claim that:
+  (a) is a document title, author/institution header, or bibliographic citation;
+  (b) is a generic rhetorical or editorial remark with no empirical substance (e.g. "It is worth taking a look at X", "Living longer is generally seen as a good thing");
+  (c) only states that a study was conducted or describes its sample/methodology without stating any empirical finding, trend, or conclusion.
+- FACTUAL GROUNDING IS NOT EVALUATED HERE: Verification handles truth and citation proof. Only judge whether the claim, if true, provides substantive empirical information answering the sub-question.
+- "direct": The claim provides a concrete empirical fact, statistic, comparison, or causal mechanism that directly informs the sub-question (including positive findings, negative findings, joint causation, or critiques).
+- "off_topic": The claim fails the rules above, is purely tangential context, describes an entity without answering what was asked about it, or lacks empirical substance.
 
 There is NO "partial". Only "direct" or "off_topic".
 Echo the EXACT candidate ID provided in brackets (e.g. if the claim is [temp_Q1_1], use "cid": "temp_Q1_1").
@@ -608,6 +622,22 @@ def refine_queries(llm, subq: dict, evidence_summary: str, missing_info: str = "
     return clean_qs[:2] or [sanitize_search_query(subq["question"])]
 
 
+_META_CLAIM_RE = re.compile(
+    r"^((first|second|third|finally),?\s+)?("
+    r"in this (report|paper|study|article|briefing|section|note|chapter)|"
+    r"this (report|paper|study|article|briefing|section|special issue|pamphlet|book|review)\s+(examines|investigates|analyzes|explores|focuses|discusses|attempts|is a\s+)|"
+    r"(we|the authors|the editors)\s+(extend|identify|discuss|analyze|expect|examine|investigate)|"
+    r"these prior studies have all examined"
+    r")",
+    re.IGNORECASE,
+)
+
+_DANGLING_PREFIX_RE = re.compile(
+    r"^(these|those|this|they|he|she|it|their|his|her|such)\s+(include|includes|included|was|were|is|are|mechanism|mechanisms|factors|results|findings|people)\b",
+    re.IGNORECASE,
+)
+
+
 def sanitize_claim_text(text: str) -> str:
     """Clean claim text by stripping bullets, list prefixes, and citation header fragments."""
     if not text:
@@ -617,6 +647,33 @@ def sanitize_claim_text(text: str) -> str:
     t = re.sub(r"^(claim\s*\d*|C\d+|\d+[\).:])\s*", "", t, flags=re.IGNORECASE).strip()
     t = re.sub(r"^by\s+[A-Za-z\s.]+·\s*\d{4}\s*·\s*cited\s+by\s+\d+\s*—\s*", "", t, flags=re.IGNORECASE).strip()
     return t
+
+
+def is_low_quality_claim_text(text: str) -> bool:
+    """Zero-token deterministic guard against headers, bibliography lines, questions, truncated sentences, and study-scope announcements."""
+    if not text or len(text) < 20 or not re.search(r"[a-zA-Z]{3,}", text):
+        return True
+    # 1. Reject interrogative questions or truncated sentences (e.g. ending with "(i.e." or "(e.g." or unclosed parens)
+    if text.endswith("?") or re.search(r"(\b(i\.e|e\.g|etc|vs|cf)\.?|\(|—|:|,)$", text.strip(), re.IGNORECASE):
+        return True
+    if text.count("(") != text.count(")"):
+        return True
+    # 2. Reject raw URLs or bibliographic reference fragments (e.g. C20 in Deeptrace 3)
+    if "http://" in text or "https://" in text or "doi.org/" in text:
+        return True
+    if re.search(r"\b[A-Z][a-z]+,\s*[A-Z]\.\s*(\(\d{4}\))?$", text):
+        return True
+    # 3. Reject ALL-CAPS titles/headers (e.g. C12 in Deeptrace 3)
+    alpha = [ch for ch in text if ch.isalpha()]
+    if len(alpha) < 12 or (sum(1 for ch in alpha if ch.isupper()) / len(alpha)) > 0.55:
+        return True
+    # 4. Reject pure study-scope announcements ("In this report, we examine...") or dangling pronoun fragments ("These include...")
+    stripped_quotes = text.lstrip(" \"'\u201c\u2018")
+    if _META_CLAIM_RE.search(stripped_quotes):
+        return True
+    if _DANGLING_PREFIX_RE.search(stripped_quotes):
+        return True
+    return False
 
 
 def draft_claims(llm, subq: dict, evidence: list[dict], existing: list[str], main_question: str = "") -> list[dict]:
@@ -635,7 +692,7 @@ def draft_claims(llm, subq: dict, evidence: list[dict], existing: list[str], mai
         if not isinstance(c, dict):
             continue
         text = sanitize_claim_text(c.get("text") or "")
-        if len(text) < 15 or not re.search(r"[a-zA-Z]{3,}", text):
+        if is_low_quality_claim_text(text):
             continue
         ids = [i for i in c.get("evidence_ids", []) if i in allowed]
         claims.append({"text": text, "evidence_ids": ids})
@@ -729,8 +786,23 @@ def evaluate_claim_relevance(llm, subq: dict, claims: list[dict], model: str | N
 
 
 def _norm(s: str) -> str:
+    s = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", s)
     s = s.lower().replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+    s = re.sub(r"[\u2010-\u2015\u2212-]", " ", s)
     return re.sub(r"[^a-z0-9%$.,' ]+", " ", re.sub(r"\s+", " ", s)).strip()
+
+
+def _quote_in_text(quote: str, joined_norm: str) -> bool:
+    if not quote:
+        return False
+    q_norm = _norm(quote)
+    if q_norm and q_norm in joined_norm:
+        return True
+    # Handle judge quotes that use "..." or "…" to bridge two parts of a sentence
+    parts = [p for p in re.split(r"\.{2,}|\u2026", quote) if len(_norm(p)) >= 12]
+    if len(parts) >= 2 and all(_norm(p) in joined_norm for p in parts):
+        return True
+    return False
 
 
 def _numbers(s: str) -> set[str]:
@@ -756,7 +828,7 @@ def verify_claim(llm, claim: dict, evidence_by_id: dict[str, dict], model: str |
     # Programmatic grounding checks: the judge's quote must really be in a cited passage,
     # and every number in the claim must appear in the cited text.
     joined = _norm(" ".join(e["text"] for e in cited))
-    if not quote or _norm(quote) not in joined:
+    if not _quote_in_text(quote, joined):
         return {"status": "unverified", "verdict": "supported",
                 "reason": "judge said supported but its quoted excerpt is not verbatim in the cited source",
                 "quote": quote}

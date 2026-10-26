@@ -255,7 +255,7 @@ def build_graph(ctx: Ctx):
         claims = list(state["claims"])
         filtered_claims_list = list(state.get("filtered_claims", []))
         claims_lock = threading.Lock()
-        known = {c["text"].lower() for c in claims}
+        known = {agents._norm(c["text"]) for c in claims}
         focus_qs = [q for q in state["subqs"] if q["id"] in state["focus"]]
 
         def draft_subq(q):
@@ -287,7 +287,7 @@ def build_graph(ctx: Ctx):
             fragments_dropped = 0
             for idx, c in enumerate(drafted):
                 txt = agents.sanitize_claim_text(c.get("text") or "")
-                if not txt or len(txt) < 15 or not re.search(r"[a-zA-Z]{3,}", txt):
+                if agents.is_low_quality_claim_text(txt):
                     fragments_dropped += 1
                     continue
                 temp_candidates.append({
@@ -379,11 +379,11 @@ def build_graph(ctx: Ctx):
             # Assign permanent CIDs and save ONLY direct claims
             items = []
             for c in direct_candidates:
-                txt_lower = c["text"].lower()
+                txt_norm = agents._norm(c["text"])
                 with claims_lock:
-                    if txt_lower in known:
+                    if txt_norm in known:
                         continue
-                    known.add(txt_lower)
+                    known.add(txt_norm)
                     cid = f"C{len(claims) + 1}"
                     cl = {
                         "cid": cid,
