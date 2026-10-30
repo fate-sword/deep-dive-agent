@@ -3950,6 +3950,17 @@ function startRun(query, isSample) {
       state.running = false;
       qInput.disabled = false;
       sendBtn.disabled = false;
+      const sgPlanning = $('#sg-planning');
+      if (sgPlanning) {
+        sgPlanning.classList.remove('sg-active');
+        sgPlanning.classList.add('sg-error');
+      }
+      const banner = $('#loop-notice');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.className = 'loop-notice error';
+        banner.innerHTML = `<strong>Note:</strong> ${esc(err.message)}`;
+      }
     });
 }
 
@@ -4062,7 +4073,14 @@ function handleEvent(ev) {
     setStage(STAGE_MAP[step]);
   }
 
-  if (step === 'plan' && kind === 'subquestions') {
+  if (kind === 'thinking' || (step === 'plan' && kind === 'thinking')) {
+    sgActivate('planning');
+    if (p.message) {
+      sgSetSummary('planning', p.message);
+      addLog('planner', p.message);
+    }
+  }
+  else if (step === 'plan' && kind === 'subquestions') {
     _subqList = (p.sub_questions || []).map(sq => sq.id);
     (p.sub_questions || []).forEach(sq => {
       getOrCreateLane(sq.id, sq.question, sq.tag);

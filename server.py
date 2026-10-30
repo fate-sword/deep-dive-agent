@@ -33,7 +33,7 @@ SAMPLE = json.load(open(SAMPLE_PATH, encoding="utf-8")) if os.path.exists(SAMPLE
 if SAMPLE.get("report"):
     SAMPLE["report"]["board"] = build_findings_board(SAMPLE["report"])
 
-slots = threading.Semaphore(2)
+slots = threading.Semaphore(5)
 last_by_ip: dict[str, float] = {}
 ip_lock = threading.Lock()
 
@@ -46,9 +46,10 @@ def sse_format(data) -> str:
     return f"data: {json.dumps(data, default=str)}\n\n"
 
 
-def sample_events():
+async def sample_events():
     for e in SAMPLE.get("events", []):
-        time.sleep(e.get("delay", 0.4))
+        delay = e.get("delay", 0.3)
+        await asyncio.sleep(delay)
         yield sse_format({k: v for k, v in e.items() if k != "delay"})
     yield sse_format({"kind": "report", "report": SAMPLE.get("report", {}), "sample": True})
 
@@ -171,8 +172,12 @@ async def create_run(
     if not is_sample:
         with ip_lock:
             now = time.time()
-            if now - last_by_ip.get(client_ip, 0) < 30:
-                raise HTTPException(429, "Please wait 30 seconds between research runs.")
+            is_local = client_ip in ("127.0.0.1", "localhost", "::1", "testclient")
+            min_interval = 2 if is_local else 10
+            elapsed = now - last_by_ip.get(client_ip, 0)
+            if elapsed < min_interval:
+                wait_sec = int(min_interval - elapsed) + 1
+                raise HTTPException(429, f"Please wait {wait_sec}s between research runs.")
             last_by_ip[client_ip] = now
 
     run_id = f"sample_{uuid.uuid4().hex[:8]}" if is_sample else uuid.uuid4().hex[:10]
@@ -208,17 +213,72 @@ async def stream_run_events(request: Request, run_id: str):
     async def event_generator():
         try:
             if run_data.get("sample"):
-                for chunk in sample_events():
+                async for chunk in sample_events():
                     if await request.is_disconnected():
                         break
                     yield chunk
-            else:
-                for chunk in live_events(run_data["question"], run_data.get("uploads"), cancel_event, provider=run_data.get("provider"), depth=run_data.get("depth", "std")):
-                    if await request.is_disconnected():
-                        if cancel_event:
-                            cancel_event.set()
-                        break
-                    yield chunk
+                return
+
+            q: queue.Queue = queue.Queue()
+
+            # Immediate initial SSE event so client knows the pipeline is live
+            yield sse_format({
+                "step": "plan",
+                "kind": "thinking",
+                "payload": {"message": "Formulating research plan and querying Mesh API..."}
+            })
+
+            def work():
+                try:
+                    with slots:
+                        if cancel_event and cancel_event.is_set():
+                            return
+                        run_id_res, rep = run_research(
+                            run_data["question"],
+                            uploads=run_data.get("uploads"),
+                            settings=settings,
+                            on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p}),
+                            provider=run_data.get("provider"),
+                            depth=run_data.get("depth", "std"),
+                            cancel_event=cancel_event,
+                        )
+                    if rep and isinstance(rep, dict):
+                        if "metrics" in rep:
+                            rep["metrics"]["provider"] = run_data.get("provider") or settings.llm_provider
+                            rep["metrics"]["model"] = settings.model
+                        if "board" not in rep:
+                            rep["board"] = build_findings_board(rep)
+                    q.put({"kind": "report", "report": rep})
+                except Exception as ex:
+                    q.put({"kind": "error", "message": str(ex)[:300]})
+                finally:
+                    q.put(None)
+
+            t = threading.Thread(target=work, daemon=True)
+            t.start()
+
+            last_heartbeat = time.time()
+            while True:
+                if await request.is_disconnected():
+                    if cancel_event:
+                        cancel_event.set()
+                    break
+                if cancel_event and cancel_event.is_set():
+                    break
+
+                try:
+                    item = q.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.08)
+                    if time.time() - last_heartbeat >= 5.0:
+                        yield ": keep-alive\n\n"
+                        last_heartbeat = time.time()
+                    continue
+
+                if item is None:
+                    break
+                yield sse_format(item)
+                last_heartbeat = time.time()
         finally:
             if cancel_event:
                 cancel_event.set()

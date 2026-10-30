@@ -38,12 +38,13 @@ class State(TypedDict, total=False):
 class Ctx:
     def __init__(self, llm, store: RunStore, settings: Settings, run_id: str, doc_index=None,
                  search_fn=web_search, fetch_fn=fetch_page, progress: Callable[[str], None] | None = None,
-                 on_event: Callable | None = None):
+                 on_event: Callable | None = None, cancel_event: threading.Event | None = None):
         self.llm, self.store, self.s, self.run_id = llm, store, settings, run_id
         self.settings = settings
         self.doc_index, self.search_fn, self.fetch_fn = doc_index, search_fn, fetch_fn
         self.progress = progress or (lambda m: None)
         self.on_event = on_event
+        self.cancel_event = cancel_event
         self.started = time.time()
         if hasattr(self.llm, "on_llm_call"):
             self.llm.on_llm_call = lambda data: self.log("llm", "call", data)
@@ -95,6 +96,9 @@ def build_graph(ctx: Ctx):
         ctx.log("lane", "status", payload, f"Lane [{subq_id}] {new_state}: {cur['reason']}" if cur["reason"] else None)
 
     def plan_node(state: State):
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            raise RuntimeError("Run was cancelled by client")
+        ctx.log("plan", "thinking", {"message": "Decomposing research query into structured sub-questions via Mesh API..."})
         depth_setting = getattr(ctx.settings, "depth", "std") or "std"
         try:
             subqs = agents.plan(ctx.llm, state["question"], depth=depth_setting)
@@ -123,6 +127,8 @@ def build_graph(ctx: Ctx):
         }
 
     def research_node(state: State):
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            raise RuntimeError("Run was cancelled by client")
         evidence, subqs, loop = list(state["evidence"]), [dict(q) for q in state["subqs"]], state["loop"]
         seen_urls = {e["url"] for e in evidence}
         seen_text = {(e["url"], e["text"][:80]) for e in evidence}
@@ -252,6 +258,8 @@ def build_graph(ctx: Ctx):
         return {"evidence": evidence, "subqs": subqs}
 
     def draft_node(state: State):
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            raise RuntimeError("Run was cancelled by client")
         claims = list(state["claims"])
         filtered_claims_list = list(state.get("filtered_claims", []))
         claims_lock = threading.Lock()
@@ -450,6 +458,8 @@ def build_graph(ctx: Ctx):
         return {"claims": claims, "filtered_claims": filtered_claims_list}
 
     def verify_node(state: State):
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            raise RuntimeError("Run was cancelled by client")
         claims = [dict(c) for c in state["claims"]]
         ev_by_id = {e["eid"]: e for e in state["evidence"]}
         pending = [c for c in claims if c["status"] == "pending"]
@@ -556,6 +566,8 @@ def build_graph(ctx: Ctx):
         return {"contradictions": []}
 
     def synth_node(state: State):
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            raise RuntimeError("Run was cancelled by client")
         verified_only = [c for c in state["claims"] if c["status"] == "verified"]
         by_id = {c["cid"]: c for c in state["claims"]}
         registry = SourceRegistry(state["evidence"])
@@ -664,14 +676,14 @@ def build_graph(ctx: Ctx):
 
 def run_research(question: str, uploads: list[tuple[str, bytes]] | None = None, *, progress=None,
                  settings: Settings | None = None, llm=None, search_fn=web_search, fetch_fn=fetch_page,
-                 on_event=None, provider: str | None = None, depth: str | None = None):
+                 on_event=None, provider: str | None = None, depth: str | None = None, cancel_event: threading.Event | None = None):
     settings = settings or get_settings()
     if depth:
         settings.depth = depth
     store = RunStore(settings.db_path)
     llm = llm or LLM(settings, provider=provider)
     run_id = store.new_run(question)
-    ctx = Ctx(llm, store, settings, run_id, DocIndex(uploads) if uploads else None, search_fn, fetch_fn, progress, on_event)
+    ctx = Ctx(llm, store, settings, run_id, DocIndex(uploads) if uploads else None, search_fn, fetch_fn, progress, on_event, cancel_event=cancel_event)
     try:
         final = build_graph(ctx).invoke({"question": question}, {"recursion_limit": 60})
         store.finish(run_id, final["report"])

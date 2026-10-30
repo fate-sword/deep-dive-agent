@@ -108,7 +108,7 @@ Deeptrace uses **BM25Okapi** (`rank-bm25`) for ranking passage relevance across 
 
 1. **Claim Statuses**:
    - `verified`: Directly supported by cited source and passes both quote and numerical verification. Used in final report.
-   - `unverified`: Partially supported or missing exact numbers/quotes. Labeled with `(unverified)` tag.
+   - `unverified`: Partially supported or missing exact numbers/quotes. **Never included in the synthesized report text**; preserved in the decision trail, claims audit data, and exports appendix.
    - `rejected`: Unsupported or contradicted by cited source. **Never included in the final report**; preserved in the decision trail with explicit rejection reasons.
 2. **Programmatic Grounding Checks**:
    - Verifier must return a verbatim excerpt from the passage. The system programmatically checks that the normalized quote exists in the source passage.
@@ -131,8 +131,8 @@ Deeptrace uses **BM25Okapi** (`rank-bm25`) for ranking passage relevance across 
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-username/deeptrace.git
-cd deeptrace
+git clone https://github.com/fate-sword/deep-thread.git
+cd deep-thread
 
 # 2. Set up virtual environment
 python -m venv .venv
@@ -157,7 +157,7 @@ python -m uvicorn server:app --reload --port 7860
 ### Running Tests
 
 ```bash
-# Run full offline test suite (23 tests: pipeline, parallelism, providers, and server streaming)
+# Run full offline test suite (55 tests: pipeline, parallelism, providers, server streaming, unverified suppression)
 python -m pytest -v
 ```
 
