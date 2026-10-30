@@ -213,10 +213,7 @@ class LLM:
     def chat(self, system: str, user: str, *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int = 2000, tag: str = "",
              retry_reason: str = "") -> str:
-        if self.provider.name == "mesh":
-            target_model = os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
-        else:
-            target_model = model or self.s.get_model_for_tag(tag)
+        target_model = model or (self.s.get_model_for_tag(tag) if hasattr(self.s, "get_model_for_tag") else None) or getattr(self.s, "model", None) or os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
         if not target_model:
             raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
@@ -240,6 +237,13 @@ class LLM:
             extra_body: dict[str, Any] = dict(extra_body_base)
             # Candidate failover is handled cleanly in Python across the candidate chain
             extra_body.pop("models", None)
+
+            # Ensure no invalid reasoning config causes 422 on Mesh API
+            if self.provider.name == "mesh":
+                if "reasoning" in extra_body:
+                    r_conf = extra_body.get("reasoning")
+                    if isinstance(r_conf, dict) and r_conf.get("max_tokens", 0) < 1024:
+                        extra_body.pop("reasoning", None)
 
             # Per-call thinking policy: disable or minimize reasoning overhead for GLM on Mesh
             if self.provider.name == "mesh" and "glm" in current_model.lower():
@@ -303,6 +307,9 @@ class LLM:
                         raw_content = ""
                         if msg:
                             raw_content = getattr(msg, "content", "") or ""
+                            r_cnt = getattr(msg, "reasoning_content", None)
+                            if not raw_content and isinstance(r_cnt, str):
+                                raw_content = r_cnt
 
                         stripped = strip_thinking(raw_content)
 
