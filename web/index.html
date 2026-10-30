@@ -8,6 +8,693 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<!-- thinking-orbs v0.1.2 — MIT (vendored in web/vendor/thinking-orbs.js) -->
+<script id="thinking-orbs-core">
+(function(global) {
+/** One state per thing an agent does, and the looks each comes in, `default` first. */
+const VARIANTS = {
+    idle: ["default", "blink"],
+    working: ["default", "gyro"],
+    reasoning: ["default", "twins"],
+    searching: ["default", "lighthouse"],
+    background: ["default", "spiral"],
+    retrying: ["default", "surge"],
+    compacting: ["default", "squeeze", "fuse"],
+    waiting: ["default"],
+    using: ["default", "tap", "scroll", "type", "zoom", "snap", "record"],
+};
+const TAU = Math.PI * 2;
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+const ease = (x) => (1 - Math.cos(Math.PI * x)) / 2;
+const hash = (n) => {
+    const s = Math.sin(n * 127.1) * 43758.5453;
+    return s - Math.floor(s);
+};
+const dist2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+/**
+ * The k points nearest pts[i], nearest first: one pass keeping a short sorted list, not a sort of them all.
+ * Plain loops, as it runs once per dot at mount. @internal Shared with `renders.ts`, not part of the API.
+ */
+const nearest = (pts, i, k) => {
+    const idx = [], d = [], p = pts[i];
+    for (let j = 0; j < pts.length; j++) {
+        if (j === i)
+            continue;
+        const e = dist2(p, pts[j]);
+        let at = idx.length;
+        if (at === k) {
+            if (e >= d[k - 1])
+                continue;
+            at--;
+        }
+        while (at > 0 && d[at - 1] > e) {
+            idx[at] = idx[at - 1];
+            d[at] = d[at - 1];
+            at--;
+        }
+        idx[at] = j;
+        d[at] = e;
+    }
+    return idx;
+};
+/** Time for one full turn, in ms. Retrying's two set their own pace in `yawOf`. */
+const PERIOD = {
+    idle: 6500,
+    "idle-blink": 13000,
+    working: 3000,
+    "working-gyro": 3000,
+    reasoning: 6500,
+    "reasoning-twins": 6500,
+    searching: 13000,
+    "searching-lighthouse": 13000,
+    background: 13000,
+    "background-spiral": 13000,
+    retrying: 13000,
+    "retrying-surge": 13000,
+    compacting: 10000,
+    "compacting-squeeze": 10000,
+    "compacting-fuse": 10000,
+    waiting: 13000,
+    using: 13000,
+    "using-tap": 13000,
+    "using-scroll": 13000,
+    "using-type": 13000,
+    "using-zoom": 13000,
+    "using-snap": 13000,
+    "using-record": 13000,
+};
+/**
+ * One clock (ms) per look (state and speed), so every orb of it stays in phase. A frame's gap is
+ * capped at 100ms, so a tab coming back from the background, or a look nobody had in view, carries
+ * on instead of jumping.
+ */
+const clocks = new Map();
+function tick(look, now, speed) {
+    let c = clocks.get(look);
+    if (!c)
+        clocks.set(look, (c = { t: 0, last: now }));
+    // A frame's timestamp can predate the performance.now() that started the clock, so never step back.
+    if (now > c.last) {
+        c.t += Math.min(now - c.last, 100) * speed;
+        c.last = now;
+    }
+    return c.t;
+}
+/**
+ * A spring settling from 0 to 1: shoots ~22% past, dips ~5% under, and lands on 1 exactly at
+ * x=1. The last term trims the spring's tiny leftover so the next phase starts clean.
+ */
+const spring = (x) => 1 - Math.exp(-4.5 * x) * Math.cos(3 * Math.PI * x) - x * Math.exp(-4.5);
+/**
+ * Retrying's spin at `t` for speed `w` (rad/ms), every 3.2s: turns 2s, brakes over 0.2s, springs
+ * back 60% of what it turned over 0.8s, then speeds up again over 0.2s. Whole cycles stack, so it never jumps.
+ */
+function rewind(t, w) {
+    const P = 3200, k = Math.floor(t / P), u = t - k * P;
+    const back = 0.6 * 2100 * w;
+    // Braking and speeding up are each linear over 200ms, so each covers half its span at full speed: 100ms' worth.
+    const fwd = (2000 + 100 + 100) * w;
+    let a;
+    if (u < 2000)
+        a = u * w;
+    else if (u < 2200) {
+        const x = (u - 2000) / 200;
+        a = (2000 + 200 * (x - (x * x) / 2)) * w;
+    }
+    else if (u < 3000)
+        a = 2100 * w - back * spring((u - 2200) / 800);
+    else {
+        const x = (u - 3000) / 200;
+        a = 2100 * w - back + 100 * x * x * w;
+    }
+    return k * (fwd - back) + a;
+}
+function yawOf(state, t) {
+    // The rewind at double time, at half the rate, so it still averages 4.5s a turn.
+    if (state === "retrying")
+        return rewind(2 * t, TAU / 9000);
+    if (state === "retrying-surge") {
+        // Every turn, at 3.25s, starts fast and eases out, then the next launches straight away.
+        const turns = t / 3250, u = turns - Math.floor(turns);
+        return (Math.floor(turns) + (1 - (1 - u) ** 3)) * TAU;
+    }
+    // Scroll rolls instead, so it holds still side to side.
+    if (state === "using-scroll")
+        return 0.4;
+    // Snap turns for most of each beat and stops dead for the rest, as the frame is caught.
+    if (state === "using-snap")
+        return ((Math.floor(t / BEAT) * SPIN + Math.min(t % BEAT, SPIN)) / PERIOD[state]) * TAU;
+    return (t / PERIOD[state]) * TAU;
+}
+/** Working's ring axis in view space: tipped 30° toward you, then rolled 10° so its right end rides higher. */
+const RING_AXIS = (() => {
+    const tip = (30 * Math.PI) / 180, roll = (10 * Math.PI) / 180;
+    return [-Math.sin(roll) * Math.cos(tip), Math.cos(roll) * Math.cos(tip), Math.sin(tip)];
+})();
+/** Gyro and Squeeze: the ends turn up to this far (rad) against the middle, opposite ways. */
+const TWIST = 1.4;
+/** Lighthouse: its beam leans this far (rad) right, and its trail dies out this far behind it. */
+const LEAN = (30 * Math.PI) / 180, TRAIL = Math.PI / 2;
+// Searching: a lens hops between spots on the front of the sphere. Each hop is one
+// segment: it glides for the first MOVE of it, then lingers on the spot.
+const LENS_MS = 1800, MOVE = 0.4;
+const LENS = 0.6; // angular radius in radians, a bit under half the sphere's width across
+/** The k-th spot, in view space (z toward you). Kept 15–45° off centre, never on the rim. */
+function spot(k) {
+    const phi = k * 2.45 + hash(k) * 1.5, theta = ((15 + 30 * hash(k + 0.5)) * Math.PI) / 180;
+    return [Math.sin(theta) * Math.cos(phi), Math.sin(theta) * Math.sin(phi), Math.cos(theta)];
+}
+function lensAt(t) {
+    const k = Math.floor(t / LENS_MS), u = t / LENS_MS - k;
+    const e = u < MOVE ? (1 - Math.cos((u / MOVE) * Math.PI)) / 2 : 1;
+    const a = spot(k), b = spot(k + 1);
+    const v = a.map((ai, j) => ai + (b[j] - ai) * e), n = Math.hypot(v[0], v[1], v[2]);
+    return v.map((vi) => vi / n);
+}
+// Using: a cursor in view space, like the lens, that glides between spots on the front and acts on them.
+// PTR is its angular radius, PRESS how wide a click dents, and a click's ripple runs out over RIPPLE_MS.
+const PTR = 0.45, PRESS = 0.5, RIPPLE_MS = 600;
+/** The cursor's k-th resting spot: the lens's spots, further along so the two don't move alike. */
+const mark = (k) => spot(k + 57);
+const slide = (a, b, e) => {
+    const v = a.map((ai, j) => ai + (b[j] - ai) * e), n = Math.hypot(v[0], v[1], v[2]);
+    return v.map((vi) => vi / n);
+};
+/** A dot's weight under a soft disc `w` rad wide, from its angle `ang` off the centre. */
+const bump = (ang, w) => (ang < w ? (1 - (ang / w) ** 2) ** 2 : 0);
+/** Tap: every TAP ms the cursor glides to the next spot over the first 35%, settles, and clicks halfway. */
+const TAP = 1400;
+function tapAt(t) {
+    const k = Math.floor(t / TAP), u = t / TAP - k;
+    const at = slide(mark(k), mark(k + 1), u < 0.35 ? ease(u / 0.35) : 1);
+    return { at, click: mark(u < 0.5 ? k : k + 1), since: (u < 0.5 ? u + 0.5 : u - 0.5) * TAP };
+}
+/** How far a click is pressed `s` ms after it: in over 60ms, out over the next 240ms. */
+const pressOf = (s) => (s < 60 ? s / 60 : Math.max(0, 1 - (s - 60) / 240) ** 2);
+/** Using: its cursor, the classic arrow's outline, x right and y down from its tip, scaled to ARROW_H sphere radii tall. */
+const ARROW_H = 1;
+const ARROW = [[0, 0], [0, 16], [4, 12], [7, 18], [9, 17], [6, 11], [11, 11]].map(([x, y]) => [(x / 18) * ARROW_H, (y / 18) * ARROW_H]);
+/** Whether (x, y) falls inside `poly`, by counting the edges a ray from it crosses. */
+function inside(poly, x, y) {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i], [xj, yj] = poly[j];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
+            hit = !hit;
+    }
+    return hit;
+}
+/** Using's tip for a cursor spot: pulled in and up-left, so the arrow hanging below it stays on the face. */
+const HOME = [-0.3, 0.5];
+const onFace = (x, y) => [x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))];
+const tipOf = (p) => onFace(HOME[0] + 0.35 * p[0], HOME[1] + 0.35 * p[1]);
+/** Using given a direction: every AIM ms it glides out from its rest that way, clicks, and comes back. */
+const AIM = 1800;
+function aimAt(t, phi) {
+    const u = (t % AIM) / AIM;
+    const e = u < 0.3 ? ease(u / 0.3) : u < 0.6 ? 1 : u < 0.85 ? 1 - ease((u - 0.6) / 0.25) : 0;
+    const out = (s) => onFace(HOME[0] + 0.3 * s * Math.cos(phi), HOME[1] + 0.3 * s * Math.sin(phi));
+    return { at: out(e), click: out(1), since: (u < 0.45 ? u + 0.55 : u - 0.45) * AIM };
+}
+/** Zoom: every ZOOM ms the face swells toward you over a quarter, holds, and eases back. */
+const ZOOM = 2600;
+/**
+ * Using · Snap and Idle · Blink, on one BEAT. Snap spins for SPIN ms of it, then stops dead for the rest, with a
+ * flash as it stops. Blink's lids close from top and bottom over 120ms, meet for 60ms, and part
+ * over 250ms; it returns how far from the middle they are.
+ */
+const BEAT = 2600, SPIN = 2100;
+function snapAt(t) {
+    const u = (t % BEAT) - SPIN;
+    return u < 0 ? 0 : Math.exp(-u / 220);
+}
+function blinkAt(t) {
+    const u = t % BEAT;
+    return u < 120 ? 1.2 * (1 - ease(u / 120)) : u < 180 ? 0 : u < 430 ? 1.2 * ease((u - 180) / 250) : 1.2;
+}
+/** Record: a recording light's pulse, from 0 (dim and small) to 1 and back every REC ms in straight lines, never resting at either end. */
+const REC = 1200;
+const recAt = (t) => Math.abs(1 - 2 * ((t % REC) / REC));
+function zoomAt(t) {
+    const u = (t % ZOOM) / ZOOM;
+    return u < 0.25 ? ease(u / 0.25) : u < 0.5 ? 1 : u < 0.75 ? 1 - ease((u - 0.5) / 0.25) : 0;
+}
+/** Scroll: the sphere rolls up FLING rad a FLICK at a time, fast at first and coasting to a stop. */
+const FLICK = 1500, FLING = 1.1;
+function scrollAt(t) {
+    const k = Math.floor(t / FLICK), x = Math.min(1, (t / FLICK - k) / 0.75);
+    return { by: (k + 1 - (1 - x) ** 3) * FLING, pace: (1 - x) ** 2 };
+}
+/** The ways Scroll goes, as a page scrolls, by their angle on screen in degrees: right 0, up 90. */
+const DIRECTIONS = { right: 0, "up-right": 45, up: 90, "up-left": 135, left: 180, "down-left": 225, down: 270, "down-right": 315 };
+/** Scroll without a direction: each flick carries the face its own way on screen: up, down, up-right, left, right, down-left. */
+const PAN = [90, 270, 45, 180, 0, 225].map((deg) => (deg * Math.PI) / 180);
+/** The 3×3 turn (row-major) by `th` rad that carries the front of the sphere `phi` rad round from right on screen. */
+function panTurn(phi, th) {
+    // The axis lies on screen, square to the way the face moves.
+    const ax = -Math.sin(phi), ay = Math.cos(phi), s = Math.sin(th), c = Math.cos(th), v = 1 - c;
+    return [c + ax * ax * v, ax * ay * v, ay * s, ax * ay * v, c + ay * ay * v, -ax * s, -ay * s, ax * s, c];
+}
+const times = (m, n) => m.map((_, i) => m[i - (i % 3)] * n[i % 3] + m[i - (i % 3) + 1] * n[(i % 3) + 3] + m[i - (i % 3) + 2] * n[(i % 3) + 6]);
+/**
+ * Type: a short paragraph typed onto the face, held, then cleared. TEXT is its lines, "x" a letter
+ * and " " a space, so words read as bars with gaps between. Each character is a cell CELL wide from
+ * LEFT, and lines sit LEAD apart down from TOP, in sphere radii on screen.
+ */
+const TEXT = ["xxxx xxx xx", "xxxxx xx xxxx", "xxx xxxxx"];
+const CELL = 0.09, LEAD = 0.3, TOP = 0.33, LEFT = -0.5;
+/** Every key in order, with when it lands: 70–130ms a letter, longer after a word, longer still at a line's end. */
+const KEYS = (() => {
+    let at = 0;
+    return TEXT.flatMap((line, row) => [...line].map((ch, col) => {
+        const key = { row, col, at };
+        at += ch === " " ? 200 : col === line.length - 1 ? 350 : 70 + 60 * hash(row * 31 + col);
+        return key;
+    }));
+})();
+/** Which key types each cell, by row then column. */
+const KEY_OF = TEXT.map((_, row) => KEYS.flatMap((k, i) => (k.row === row ? [i] : [])));
+const TYPED = KEYS[KEYS.length - 1].at, PARAGRAPH = TYPED + 1300;
+function typeAt(t) {
+    const c = t % PARAGRAPH;
+    let n = 0;
+    while (n < KEYS.length && KEYS[n].at <= c)
+        n++;
+    const since = n ? c - KEYS[n - 1].at : Infinity;
+    // The caret waits where the next key lands, or after the last one; it blinks only while idle.
+    const next = KEYS[n] ?? { row: TEXT.length - 1, col: TEXT[TEXT.length - 1].length };
+    const blink = since < 300 ? 1 : +(Math.floor(c / 450) % 2 === 0);
+    return { n, since, blink, caret: [LEFT + next.col * CELL, TOP - next.row * LEAD], fade: c < TYPED + 900 ? 1 : Math.max(0, 1 - (c - TYPED - 900) / 300) };
+}
+/**
+ * Reasoning's walk: a hop every HOP ms to one of the REACH nearest dots, with the last TAIL lit
+ * and fading. WALK dots of each walk are kept.
+ */
+const HOP = 220, TAIL = 5, REACH = 24, WALK = 16;
+/** The orb's own look: a circle per dot. No dot drops below 0.45px, or it renders as a grey haze. */
+const DOTS = {
+    mount: ({ make, pts }) => {
+        const els = pts.map(() => make("circle")), hidden = new Uint8Array(pts.length);
+        return {
+            dot(i, x, y, r, a) {
+                const el = els[i], o = a.toFixed(2);
+                // A hidden dot stays hidden wherever it is, so skip it: about a third of a sphere, every frame.
+                if (o === "0.00" && hidden[i])
+                    return;
+                hidden[i] = +(o === "0.00");
+                el.setAttribute("cx", x.toFixed(2));
+                el.setAttribute("cy", y.toFixed(2));
+                el.setAttribute("r", Math.max(0.45, r).toFixed(2));
+                el.setAttribute("fill-opacity", o);
+            },
+        };
+    },
+};
+/**
+ * Background · Spiral's eight arms, wound pole to pole, turning a radian of longitude per radian of
+ * latitude. Toward the poles every other arm stops where they'd crowd, then every other of those,
+ * so the caps fill without clotting.
+ */
+function arms(count) {
+    const at = (lat, lon) => [Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon)];
+    const g = Math.sqrt((4 * Math.PI) / count), n = 8, along = 0.6 * g;
+    return Array.from({ length: n }, (_, m) => {
+        const room = m ? m & -m : n;
+        const lim = Math.min((85 * Math.PI) / 180, Math.acos(Math.min(1, (g * n) / (TAU * room))));
+        const out = [];
+        // Each arm starts at its own offset so the dots don't line up into rings across arms.
+        for (let lat = -lim + ((m * 0.618) % 1) * along; lat <= lim; lat += along / Math.sqrt(1 + Math.cos(lat) ** 2))
+            out.push(at(lat, (m / n) * TAU - lat));
+        return out;
+    }).flat();
+}
+/** Where the dots sit: on a unit sphere, a Fibonacci spiral, or for Background · Spiral, eight arms. */
+function distribute(state, count, shape) {
+    if (shape)
+        return shape.points(count, state);
+    if (state === "background-spiral")
+        return arms(count);
+    return Array.from({ length: count }, (_, i) => {
+        const y = 1 - (2 * (i + 0.5)) / count, r = Math.sqrt(1 - y * y), th = i * GOLDEN;
+        return [r * Math.cos(th), y, r * Math.sin(th)];
+    });
+}
+/**
+ * Draws an orb into `svg` and keeps it moving until `destroy()`; `pause()` holds it on its frame
+ * and `play()` carries on. The orb draws in `currentColor`, so the svg's CSS `color` tints it.
+ * With reduced motion it holds still. Needs a browser: call it once the svg is on the page.
+ */
+function mountOrb(svg, { state: asked, variant, size = 20, speed = 1, label, shape, render = DOTS, density = 1, dotSize = 1, tilt = 20, direction } = {}) {
+    // A state that doesn't exist (from plain JS, say) falls back to idle, and a variant the state doesn't have to its default.
+    // Idle was once called base, so that name still finds it.
+    const named = asked === "base" ? "idle" : asked;
+    const which = named && Object.hasOwn(VARIANTS, named) ? named : "idle";
+    const own = variant !== "default" && VARIANTS[which].includes(variant ?? "");
+    const state = (own ? `${which}-${variant}` : which);
+    const attrs = { width: size, height: size, viewBox: `0 0 ${size} ${size}`, fill: "currentColor" };
+    for (const [k, v] of Object.entries(attrs))
+        svg.setAttribute(k, String(v));
+    if (label) {
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", label);
+        svg.removeAttribute("aria-hidden");
+    }
+    else {
+        svg.setAttribute("aria-hidden", "true");
+        svg.removeAttribute("role");
+        svg.removeAttribute("aria-label");
+    }
+    // Background's orb has a quarter of the dots, so each comes out twice the size.
+    // Using draws its arrow, and Type its text, in the dots: that takes about 1000 of them, finer, however small the orb.
+    const dens = state === "background" ? 1 : state === "using" || state === "using-type" ? Math.max(4, 1000 / size) : 4;
+    const count = Math.max(8, Math.round(size * dens * density));
+    // Dots shrink as they multiply, so the sphere's coverage holds steady.
+    const form = typeof shape === "function" ? { points: shape } : shape;
+    const c = size / 2, R = c * 0.8 * (form?.scale ?? 1), rs = (size / 64) ** 0.6 * (0.72 * Math.sqrt(4 / dens)) * dotSize;
+    const pts = distribute(state, count, form);
+    // SVG, not canvas: vectors stay sharp under pinch zoom. One ink blends the same in any order, so no depth sort.
+    const make = (tag) => svg.appendChild(document.createElementNS("http://www.w3.org/2000/svg", tag));
+    const drawer = render.mount({ make: make, pts, size, radius: rs }), flat = !!render.flat;
+    // A walk needs somewhere to go: with under two dots, Reasoning just spins.
+    const reasoning = (state === "reasoning" || state === "reasoning-twins") && pts.length > 1;
+    const compacting = state === "compacting" || state === "compacting-fuse";
+    // Reasoning: each dot's REACH nearest neighbours for the walk to hop between, and each walker's walk so far (head last).
+    const near = reasoning
+        ? pts.map((_, i) => nearest(pts, i, REACH))
+        : [];
+    const walks = Array.from({ length: state === "reasoning-twins" ? 2 : 1 }, () => []);
+    let hops = 0;
+    // Scroll's whole flicks so far when it pans, so each frame stacks only the new ones.
+    let panned = { k: 0, m: [1, 0, 0, 0, 1, 0, 0, 0, 1] };
+    const draw = (t) => {
+        const period = PERIOD[state], yaw = yawOf(state, t);
+        const scroll = state === "using-scroll" ? scrollAt(t) : null;
+        const way = direction && DIRECTIONS[direction];
+        let pan = null;
+        if (scroll && way !== undefined) {
+            // Given a direction, Scroll keeps to it, and the face moves against it, as a page's content does.
+            pan = panTurn((way * Math.PI) / 180 + Math.PI, scroll.by);
+        }
+        else if (scroll) {
+            // Without one it pans: the flicks so far, stacked up once each, then the one under way on top.
+            const k = Math.floor(t / FLICK);
+            if (k < panned.k)
+                panned = { k: 0, m: [1, 0, 0, 0, 1, 0, 0, 0, 1] };
+            for (; panned.k < k; panned.k++)
+                panned.m = times(panTurn(PAN[panned.k % PAN.length], FLING), panned.m);
+            pan = times(panTurn(PAN[k % PAN.length], scroll.by - k * FLING), panned.m);
+        }
+        // Working · Gyro's axis circles every 5s like a spinning top's, tipping ±10° toward you and leaning ±12° side to side.
+        const gyro = state === "working-gyro" ? (t / 5000) * TAU : null;
+        const pitch = (((flat ? 0 : tilt) + (form?.tip ?? 0) + (gyro === null ? 0 : 10 * Math.cos(gyro))) * Math.PI) / 180;
+        const roll = gyro === null ? 0 : ((12 * Math.sin(gyro)) * Math.PI) / 180, sr = Math.sin(roll), cr = Math.cos(roll);
+        const sy = Math.sin(yaw), cy = Math.cos(yaw), st = Math.sin(pitch), ct = Math.cos(pitch);
+        // How far a dot faces you right now, which the walk steers by.
+        const facing = (k) => pts[k][1] * st + (-pts[k][0] * sy + pts[k][2] * cy) * ct;
+        // Reasoning: how lit each dot on the walk's tail is, the head brightest.
+        const lit = new Map();
+        if (reasoning) {
+            const s = t / HOP, n = Math.floor(s), f = s - n;
+            if (!walks[0].length) {
+                // The first walker starts at the dot facing you most; a second, at a front dot well away from it.
+                const first = [...pts.keys()].reduce((b, k) => (facing(k) > facing(b) ? k : b), 0);
+                const apart = (k) => facing(k) + dist2(pts[k], pts[first]);
+                walks.forEach((walk, w) => walk.push(w ? [...pts.keys()].reduce((b, k) => (apart(k) > apart(b) ? k : b), 0) : first));
+            }
+            hops = Math.max(hops, n - WALK);
+            for (; hops < n; hops++) {
+                walks.forEach((walk, w) => {
+                    // Hop to the neighbour that faces you most, with a little chance mixed in so it wanders.
+                    const recent = walk.slice(-8), from = walk[walk.length - 1];
+                    let best = -1, score = -Infinity;
+                    // With two walkers, each also pushes away from the other's head, up to ~45° apart.
+                    const other = state === "reasoning-twins" ? walks[1 - w].at(-1) : undefined;
+                    near[from].forEach((k, j) => {
+                        const apart = other === undefined ? 0 : 1.2 * Math.min(Math.sqrt(dist2(pts[k], pts[other])), 0.8);
+                        const sc = facing(k) + 0.35 * hash(hops * 31 + j + w * 977) + apart;
+                        if (!recent.includes(k) && sc > score) {
+                            score = sc;
+                            best = k;
+                        }
+                    });
+                    // With only a handful of dots every neighbour can be recent, so it hops back to the nearest.
+                    walk.push(best < 0 ? near[from][0] : best);
+                    if (walk.length > WALK)
+                        walk.shift();
+                });
+            }
+            const light = (k, v) => k !== undefined && lit.set(k, Math.max(lit.get(k) ?? 0, v));
+            for (const walk of walks)
+                for (let j = TAIL - 1; j >= 0; j--)
+                    light(walk[walk.length - 1 - j], j === 0 ? ease(Math.min(1, f * 2)) : 1 - (j - 1 + f) / TAIL);
+        }
+        // Waiting: a comet's head runs round a lap every 2s on screen, spiralling from 70° north to
+        // 70° south every 6s. `ahead` is how fast it moves over the sphere's own surface, in rad/ms.
+        const head = (t / 2000) * TAU + yaw, ahead = TAU / 2000 + TAU / period;
+        const headLat = (tt) => ((70 * Math.PI) / 180) * (1 - 2 * ((tt % 6000) / 6000));
+        // It fades in and out over the first and last ~10% of each descent, so the jump back to the top doesn't show.
+        const glow = Math.min(1, 3 * Math.sin(Math.PI * ((t % 6000) / 6000)));
+        // The lens lives in view space, so it searches the face you see while the sphere turns under it.
+        const lens = state === "searching" ? lensAt(t) : null;
+        // Gyro and Squeeze twist back and forth every 2.6s, Gyro at half the twist.
+        const tw = state === "working-gyro" ? 0.5 * Math.sin((t / 2600) * TAU) : state === "compacting-squeeze" ? Math.sin((t / 2600) * TAU) : 0;
+        // Compacting: a line crosses left to right over 2s, packing what it's passed, then all lets go
+        // over 0.8s. Compacting springs back past loose; Fuse burns out like a firework, with no bounce.
+        let sweep = null;
+        if (compacting) {
+            const u = (t % 2800) / 2800, s = (u - 0.7) / 0.3;
+            const release = state === "compacting-fuse"
+                ? (1 - s) ** 3
+                : s < 0.45
+                    ? 1 - 1.25 * ease(s / 0.45)
+                    : s < 0.7
+                        ? -0.25 * (1 - (s - 0.45) / 0.25) ** 2
+                        : 0;
+            sweep = { at: -1.15 + 2.3 * Math.min(1, u / 0.7), hold: u < 0.7 ? 1 : release };
+        }
+        let tap = null;
+        if (state === "using-tap")
+            tap = tapAt(t);
+        // Using's cursor is an arrow drawn in the dots under it.
+        const outline = state === "using";
+        if (outline) {
+            // Given a direction it keeps clicking that side; without one it wanders the face.
+            const p = way === undefined ? tapAt(t) : null;
+            tap = p ? { ...p, at: tipOf(p.at), click: tipOf(p.click) } : aimAt(t, ((way ?? 0) * Math.PI) / 180);
+        }
+        // The arrow shrinks toward its tip as a click presses.
+        const k = outline && tap ? 1 - 0.15 * pressOf(tap.since) : 1;
+        const type = state === "using-type" ? typeAt(t) : null;
+        const zoom = state === "using-zoom" ? zoomAt(t) : null;
+        const flash = state === "using-snap" ? snapAt(t) : null;
+        const lids = state === "idle-blink" ? blinkAt(t) : null;
+        const rec = state === "using-record" ? recAt(t) : null;
+        pts.forEach(([x, y, z], i) => {
+            // Twist turns each dot by an angle that grows with its height: top and bottom opposite ways.
+            const turn = yaw + TWIST * tw * y;
+            const [ly, lc] = tw ? [Math.sin(turn), Math.cos(turn)] : [sy, cy];
+            const z1 = -x * ly + z * lc;
+            let vx = x * lc + z * ly, vy = y * ct - z1 * st;
+            // Which way the spin carries this dot across the screen, for renders that draw along it.
+            const sx = z1, sy2 = vx * st;
+            let vz = y * st + z1 * ct;
+            if (pan)
+                [vx, vy, vz] = [0, 3, 6].map((j) => pan[j] * vx + pan[j + 1] * vy + pan[j + 2] * vz);
+            const d = (vz + 1) / 2;
+            let r = (0.5 + 1.4 * d) * rs;
+            // Opacity ramps from 0 just behind the rim to 1 at the front, so the back fades instead of leaving a haze.
+            let a = Math.max(0, (d - 0.3) / 0.7);
+            if (lens) {
+                // By direction, not position: a solid's dots sit at different distances from the centre.
+                const ang = Math.acos(Math.min(1, (vx * lens[0] + vy * lens[1] + vz * lens[2]) / Math.hypot(vx, vy, vz)));
+                const w = ang < LENS ? (1 - (ang / LENS) ** 2) ** 2 : 0;
+                // Dim what's outside the lens. At 24px and under, dots are ~1px and growth alone barely reads, so it enlarges harder.
+                a *= 1 - 0.55 * (1 - w);
+                if (size <= 24)
+                    r *= 1 + 0.5 * w;
+                if (w) {
+                    // Swell out of the surface, then spread away from the lens centre like a magnifier, and enlarge.
+                    vx *= 1 + 0.12 * w;
+                    vy *= 1 + 0.12 * w;
+                    vx += (vx - lens[0]) * 0.35 * w;
+                    vy += (vy - lens[1]) * 0.35 * w;
+                    r *= 1 + 0.9 * w;
+                    a += (1 - a) * w;
+                }
+            }
+            if (sweep) {
+                // Packed dots pull in and shrink, fully once the line is 0.2 past them: Compacting by 30%
+                // and 45%, Fuse by 20% and 30%, fading them to half as well.
+                const q = vx, w = Math.min(1, Math.max(0, (sweep.at - q) / 0.2)) * sweep.hold;
+                const k = state === "compacting" ? 1.5 : 1;
+                vx *= 1 - 0.2 * k * w;
+                vy *= 1 - 0.2 * k * w;
+                r *= 1 - 0.3 * k * w;
+                if (state === "compacting-fuse") {
+                    a *= 1 - 0.5 * w;
+                    // Fuse's line burns on the near half only, dots at it growing and lighting up.
+                    const g = Math.exp(-(((q - sweep.at) / 0.08) ** 2)) * Math.max(0, sweep.hold) * Math.min(1, d / 0.5);
+                    r *= 1 + 0.8 * g;
+                    a += (1 - a) * g;
+                }
+            }
+            if (state === "working") {
+                // Every 1.7s a ring of light runs down the sphere over 1.2s, through the back as well as the
+                // front. What it's passed pulls in 8% and shrinks 15%, then lets go over 0.5s.
+                const u = t % 1700, at = 1.3 - 2.6 * ease(Math.min(1, u / 1200));
+                // Halftone and Lines are flat pictures, so there the ring runs straight down rather than leaning into depth.
+                const q = flat ? vy : vx * RING_AXIS[0] + vy * RING_AXIS[1] + vz * RING_AXIS[2];
+                const g = u < 1200 ? Math.exp(-(((q - at) / 0.2) ** 2)) : 0;
+                r *= 1 + 0.6 * g;
+                a += (1 - a) * g;
+                const w = Math.min(1, Math.max(0, (q - at) / 0.2)) * (u < 1200 ? 1 : 1 - Math.min(1, 1.6 * ((u - 1200) / 800)));
+                vx *= 1 - 0.08 * w;
+                vy *= 1 - 0.08 * w;
+                r *= 1 - 0.15 * w;
+            }
+            if (state === "searching-lighthouse") {
+                // A beam leaning 30° right circles the axis, a lap every 2.5s, crossing the face left to
+                // right, with a trail dying out 90° behind it. It's full on the near half and a quarter
+                // behind, over a sphere resting at 50%.
+                a *= 0.5;
+                const lr = Math.sin(LEAN), lc = Math.cos(LEAN);
+                const across = vx * lc - vy * lr, toward = -st * (vx * lr + vy * lc) + ct * vz;
+                const off = Math.atan2(across, toward) - (((t / 2500) % 1) * TAU - Math.PI);
+                const dphi = ((((off + Math.PI) % TAU) + TAU) % TAU) - Math.PI;
+                const beam = dphi < 0 ? Math.max(0, 1 + dphi / TRAIL) : Math.exp(-((dphi / 0.45) ** 2));
+                const g = beam * (0.25 + 0.75 * Math.min(1, Math.max(0, (d - 0.4) / 0.3)));
+                r *= 1 + 0.6 * g;
+                a += (1 - a) * g;
+            }
+            if (reasoning) {
+                // The sphere rests at 50%, so only the walk reaches full.
+                const spark = lit.get(i) ?? 0;
+                a *= 0.5;
+                if (spark) {
+                    r *= 1 + 0.8 * spark;
+                    a += (1 - a) * spark;
+                }
+            }
+            if (state === "waiting") {
+                // A sharp head and a long fading tail, lit round the back too, over a sphere at 50%.
+                // Its width is measured along the surface, so it keeps its size away from the equator.
+                const lat = Math.asin(y / (Math.hypot(x, y, z) || 1)), lon = Math.atan2(z, x);
+                const off = Math.atan2(Math.sin(lon - head), Math.cos(lon - head)), along = off * Math.cos(lat);
+                const g = Math.exp(-(((lat - headLat(t + off / ahead)) / 0.28) ** 2)) * Math.exp(-((along / (off * ahead > 0 ? 0.12 : 1)) ** 2));
+                const w = glow * g ** 0.6;
+                a = a * 0.5 + (1 - a * 0.5) * w;
+                r *= 1 + 1.1 * w;
+            }
+            if (tap) {
+                // The angle off a view-space direction, by direction like the lens.
+                const n = Math.hypot(vx, vy, vz) || 1;
+                const off = (p) => Math.acos(Math.min(1, Math.max(-1, (vx * p[0] + vy * p[1] + vz * p[2]) / n)));
+                // Using rests darker, so the arrow stands out where its dots crowd together at small sizes.
+                a *= outline ? 0.25 : 0.5;
+                // A click dents what's under it for 300ms, and a ring runs out from it, fading.
+                const s = tap.since, ptr = outline ? 0 : bump(off(tap.at), PTR), ak = off(tap.click);
+                const press = pressOf(s), pw = press * bump(ak, PRESS);
+                const run = Math.min(1, s / RIPPLE_MS);
+                const ring = Math.exp(-(((ak - (0.15 + 1.3 * (1 - (1 - run) ** 2))) / 0.18) ** 2)) * (1 - run) ** 2;
+                vx *= 1 - 0.14 * pw;
+                vy *= 1 - 0.14 * pw;
+                r *= (1 - 0.35 * pw) * (1 + 0.7 * Math.max(ring, ptr * (1 - press)));
+                a += (1 - a) * Math.max(ptr, ring);
+                if (outline && inside(ARROW, (vx - tap.at[0]) / k, (tap.at[1] - vy) / k)) {
+                    // The dots inside the arrow light up, on the near side only. They barely grow, or they'd blur its edge.
+                    const lit = Math.min(1, Math.max(0, (d - 0.5) / 0.2));
+                    r *= 1 + 0.15 * lit;
+                    a += (1 - a) * lit;
+                }
+            }
+            if (type) {
+                // The paragraph lights cell by cell as it's typed, the newest letter brightest, spaces left
+                // dark. The caret is an upright bar where the next key lands. The rest sits dark, like Using.
+                a *= 0.25;
+                const row = Math.round((TOP - vy) / LEAD), col = Math.floor((vx - LEFT) / CELL), key = KEY_OF[row]?.[col];
+                let g = 0;
+                if (key !== undefined && key < type.n && TEXT[row][col] === "x" && Math.abs(TOP - row * LEAD - vy) < 0.085)
+                    g = 0.75 + (key === type.n - 1 ? 0.25 * Math.exp(-type.since / 120) : 0);
+                const [cx, cy] = type.caret;
+                if (Math.abs(vy - cy) < 0.1)
+                    g = Math.max(g, type.blink * Math.exp(-(((vx - cx) / 0.04) ** 2)));
+                a += (1 - a) * g * type.fade * Math.min(1, Math.max(0, (d - 0.5) / 0.2));
+            }
+            if (zoom) {
+                // The front swells out toward the rim and its dots grow, as if you'd moved closer. Past the rim they fade.
+                const w = zoom * Math.max(0, vz);
+                vx *= 1 + 0.45 * w;
+                vy *= 1 + 0.45 * w;
+                r *= 1 + 0.8 * w;
+                a *= Math.min(1, Math.max(0, (1.05 - Math.hypot(vx, vy)) / 0.1));
+            }
+            // Scroll brightens with its pace, so a flick reads as a burst and the coast as settling.
+            if (scroll)
+                a *= 0.55 + 0.45 * scroll.pace;
+            if (flash !== null) {
+                // A sphere at 55% lights up as it stops, and dims back while it holds.
+                a *= 0.55;
+                r *= 1 + 0.25 * flash;
+                a += (1 - a) * flash;
+            }
+            if (lids !== null) {
+                // Shut beyond the lids, with their edges lit as they close and part.
+                const edge = Math.exp(-(((Math.abs(vy) - lids) / 0.06) ** 2)) * (lids < 1.2 ? 1 : 0);
+                a *= Math.min(1, Math.max(0, (lids - Math.abs(vy)) / 0.08));
+                r *= 1 + 0.4 * edge;
+                a += (1 - a) * edge * Math.min(1, Math.max(0, (d - 0.4) / 0.3));
+            }
+            if (rec !== null) {
+                // The whole orb pulses like a recording light, dropping to a third and 8% smaller at its low.
+                vx *= 0.92 + 0.08 * rec;
+                vy *= 0.92 + 0.08 * rec;
+                a *= 0.3 + 0.7 * rec;
+            }
+            if (roll)
+                [vx, vy] = [vx * cr - vy * sr, vx * sr + vy * cr];
+            drawer.dot(i, c + vx * R, c - vy * R, r, a, sx, -sy2);
+        });
+        drawer.frame?.();
+    };
+    const look = `${state}@${speed}`;
+    draw(tick(look, performance.now(), speed));
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Only orbs on screen redraw, and only they move their look's clock on. So an orb starts from its
+    // first frame when it first comes into view, rather than partway through, and picks up where it
+    // left off when it comes back. The observer reports at once, so it starts out unseen.
+    let visible = false, raf = 0, dead = false;
+    const io = new IntersectionObserver((es) => (visible = es[es.length - 1].isIntersecting));
+    io.observe(svg);
+    function frame(now) {
+        if (visible)
+            draw(tick(look, now, speed));
+        raf = requestAnimationFrame(frame);
+    }
+    // Paused, it stops ticking too: alone it picks up where it stopped, and beside others of its look it rejoins them in step.
+    const pause = () => {
+        cancelAnimationFrame(raf);
+        raf = 0;
+    };
+    const play = () => {
+        if (!raf && !still && !dead)
+            raf = requestAnimationFrame(frame);
+    };
+    play();
+    return {
+        pause,
+        play,
+        destroy() {
+            dead = true;
+            pause();
+            io.disconnect();
+            svg.replaceChildren();
+        },
+    };
+}
+
+global.mountOrb = mountOrb; global._mountOrb = mountOrb; global._orbReady = true;
+})(window);
+</script>
 <style>
 :root {
   --bg: #fbfbf9;
@@ -35,8 +722,8 @@
   --shadow-pop: 0 4px 14px rgba(20, 20, 20, .08);
   --ease: cubic-bezier(.2, .8, .2, 1);
   --font-serif: "Newsreader", Georgia, serif;
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
   --font-hand: "Caveat", cursive, sans-serif;
 }
 
@@ -45,6 +732,7 @@ html {
   background: var(--bg);
   color: var(--ink);
   font: 15px/1.55 var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   scroll-behavior: smooth;
 }
@@ -525,23 +1213,35 @@ h1.hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: nowrap;
   margin-bottom: 10px;
 }
 .pane-title {
-  font: 600 11px var(--font-mono);
-  letter-spacing: 0.08em;
+  font-family: 'Inter', var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--muted);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .counter-pill {
-  font: 500 11px var(--font-mono);
+  font-family: 'Inter', var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 4px 10px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
-  padding: 1px 7px;
   color: var(--ink-2);
 }
 
@@ -561,59 +1261,86 @@ h1.hero {
 }
 .subq-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 8px;
 }
+.subq-title-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.subq-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.subq-tag {
+  display: inline-flex;
+  align-items: center;
+  font: 600 10.5px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 1.5px 8px;
+  color: var(--ink-2);
+  width: fit-content;
+}
 .subq-id {
-  font: 700 11px var(--font-mono);
+  font-family: 'JetBrains Mono', var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  align-self: flex-start;
+  margin-top: 2px;
   color: var(--ink);
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 2px 6px;
 }
-.subq-text { font-size: 13.5px; font-weight: 600; color: var(--ink); flex: 1; }
+.subq-text {
+  font-family: 'Inter', var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  flex: 1;
+}
 .subq-status {
-  font: 500 11px var(--font-mono);
+  font-family: 'JetBrains Mono', var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  align-self: flex-start;
+  margin-top: 2px;
   color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.subq-query-line {
+.subq-status.done {
+  color: var(--ok);
+}
+.subq-status.looping {
+  color: #d97706; /* muted amber text, no badge */
+  font-weight: 500;
+}
+.subq-status.no-evidence {
+  color: var(--warn);
+}
+.subq-active-query {
   font: 12px var(--font-mono);
-  color: var(--ink-2);
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 6px 10px;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.provider-badge {
-  font: 600 10px var(--font-mono);
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #eef2ff;
-  color: var(--accent);
-  border: 1px solid rgba(37,99,235,0.15);
-}
-.provider-badge.tavily { background: #eef2ff; color: #3b82f6; }
-.provider-badge.ddg { background: #f0fdf4; color: #16a34a; }
-.provider-badge.wikipedia { background: #f4f4f5; color: #52525b; }
-
-.subq-counts-bar {
-  font: 500 11px var(--font-mono);
   color: var(--muted);
-  margin-top: 6px;
+  margin-top: 3px;
   margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lane-reason-box {
   background: #fefce8;
@@ -649,23 +1376,85 @@ h1.hero {
   font-weight: 500;
 }
 
-/* Claim Cards */
+/* Hero Run Mode Pill */
+.run-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-left: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-family: var(--font-sans);
+}
+.run-mode-pill.live {
+  background: rgba(22, 101, 52, 0.08);
+  color: #166534;
+  border: 1px solid rgba(22, 101, 52, 0.25);
+}
+.run-mode-pill.live::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+.run-mode-pill.replay {
+  background: rgba(180, 83, 9, 0.08);
+  color: #b45309;
+  border: 1px solid rgba(180, 83, 9, 0.25);
+}
+.run-mode-pill.replay::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+/* Claim Cards & Live Lifecycle */
 .claims-list { display: flex; flex-direction: column; gap: 8px; }
 .claim-card {
   background: #fff;
   border: 1px solid var(--line);
   border-left: 3.5px solid #d4d2cb;
   border-radius: var(--r-md);
-  padding: 9px 12px;
-  font-size: 13px;
+  padding: 12px 14px;
+  font-family: 'Inter', var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: var(--ink);
   position: relative;
   overflow: hidden;
-  transition: all 0.3s var(--ease);
-  animation: card-in 0.3s var(--ease);
+  contain: layout;
+  transition: opacity 0.3s var(--ease), border-color 0.3s var(--ease), background-color 0.3s var(--ease);
+  animation: card-in 0.25s var(--ease) backwards;
 }
 @keyframes card-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.claim-card.verifying {
+  border-left-color: #60a5fa;
+  background: #fafaf9;
+}
+.claim-card.verifying::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.14), transparent);
+  animation: scan-pass 1.6s infinite linear;
+  pointer-events: none;
 }
 
 .claim-card.verified {
@@ -679,28 +1468,50 @@ h1.hero {
 .claim-card.rejected {
   border-left-color: var(--bad);
   background: #fff8f6;
-  opacity: 0.65;
+  opacity: 0.55;
 }
 .claim-card.rejected .claim-body {
-  text-decoration: line-through;
+  position: relative;
   color: var(--muted);
+  text-decoration: none;
+  background: linear-gradient(to right, var(--muted), var(--muted)) no-repeat left center;
+  background-size: 100% 1.2px;
+  animation: draw-strikethrough 0.35s ease-out forwards;
 }
-.claim-card.scanning::after {
-  content: "";
-  position: absolute;
-  top: 0; left: -100%; width: 100%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(37,99,235,0.1), transparent);
-  animation: scan-pass 0.6s var(--ease);
+@keyframes draw-strikethrough {
+  from { background-size: 0% 1.2px; }
+  to { background-size: 100% 1.2px; }
 }
 @keyframes scan-pass {
   0% { left: -100%; }
   100% { left: 100%; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .claim-card,
+  .claim-card.verifying::after,
+  .claim-card.rejected .claim-body {
+    animation: none !important;
+    transition: none !important;
+  }
+  .claim-card.rejected .claim-body {
+    text-decoration: line-through;
+  }
+}
+
 .claim-cid {
-  font: 700 11px var(--font-mono);
-  color: var(--ink);
+  font-family: 'JetBrains Mono', var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 5px;
   margin-right: 6px;
+  vertical-align: 1px;
+  display: inline-block;
 }
 .claim-body { color: var(--ink); }
 .claim-meta {
@@ -716,17 +1527,27 @@ h1.hero {
   display: flex;
   align-items: center;
   gap: 4px;
+  font-family: 'Inter', var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0;
 }
+.claim-verdict.pending { color: var(--muted); }
+.claim-verdict.verifying { color: #2563eb; font-weight: 500; }
 .claim-verdict.verified { color: var(--ok); font-weight: 600; }
-.claim-verdict.unverified { color: var(--warn); font-weight: 500; }
+.claim-verdict.unverified { color: #b45309; font-weight: 500; }
 .claim-verdict.rejected { color: var(--bad); font-weight: 500; }
 .claim-sources { display: flex; gap: 4px; flex-wrap: wrap; }
 .source-chip {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 1px 5px;
-  font: 10.5px var(--font-mono);
+  padding: 2px 7px;
+  font-family: 'JetBrains Mono', var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
   color: var(--muted);
 }
 
@@ -769,7 +1590,7 @@ h1.hero {
 .log-tag.coverage { color: var(--warn); }
 .log-tag.synthesizer { color: #d97706; }
 .log-tag.relevance { color: #64748b; font-weight: 500; }
-.log-tag.mesh, .log-tag.openrouter { color: #64748b; font-weight: 500; }
+.log-tag.mesh { color: #64748b; font-weight: 500; }
 .log-tag.error { color: var(--bad); }
 
 @keyframes in { from { opacity: 0; } to { opacity: 1; } }
@@ -779,10 +1600,9 @@ h1.hero {
    ======================================================== */
 .findings-board-wrap {
   display: none;
-  max-width: 860px;
-  margin: 44px auto 28px;
-  padding: 0 16px;
   width: 100%;
+  margin: 36px 0 20px;
+  padding: 0;
   box-sizing: border-box;
   opacity: 0;
   transition: opacity 200ms ease;
@@ -799,7 +1619,7 @@ h1.hero {
     linear-gradient(90deg, #e6eefc 1px, transparent 1px);
   background-size: 24px 24px;
   background-position: 0 0;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-card);
   padding: 36px 32px 28px;
@@ -810,22 +1630,70 @@ h1.hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
-  gap: 12px;
+  margin-bottom: 14px;
+  gap: 16px;
   flex-wrap: wrap;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
 }
-.board-mono-label {
+.board-top-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--r-md);
+}
+.board-header-left {
+  display: flex;
+  align-items: center;
+}
+.board-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font: 600 11px var(--font-mono);
-  letter-spacing: 0.1em;
+  gap: 12px;
+  font: 700 20px var(--font-mono);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
 }
+.board-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 170px;
+}
+.board-chevron-icon {
+  color: var(--muted);
+  transition: transform 200ms ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+.board-top-row:hover .board-chevron-icon {
+  color: var(--ink);
+}
+.board-top-row[aria-expanded="true"] .board-chevron-icon {
+  transform: rotate(180deg);
+}
+.board-top-row[aria-expanded="false"] .board-chevron-icon {
+  transform: rotate(0deg);
+}
+.board-verified-count {
+  display: inline-flex;
+  align-items: center;
+  font: 600 12px var(--font-mono);
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid rgba(31, 138, 91, 0.2);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  white-space: nowrap;
+}
 .board-accent-word {
   font-family: var(--font-hand);
-  font-size: 20px;
+  font-size: 34px;
   font-weight: 600;
   color: var(--accent);
   text-transform: none;
@@ -889,52 +1757,59 @@ h1.hero {
   z-index: 15;
 }
 .board-corner-tag {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.08);
+  padding: 8px 14px 8px 24px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  background: #ffffff;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.08);
-  padding: 5px 12px;
-  font: 600 11.5px var(--font-mono);
-  color: var(--ink-2);
+  gap: 8px;
   cursor: pointer;
-  user-select: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  position: relative;
+  transform: rotate(1.2deg);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  font: 600 11.5px var(--font-mono);
+  color: var(--muted);
   outline: none;
 }
 .board-corner-tag:hover, .board-corner-tag:focus-visible {
-  border-color: var(--accent);
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.12);
-  transform: translateY(-1px);
+  transform: rotate(0deg) scale(1.02);
+  box-shadow: 0 6px 16px rgba(20, 20, 20, 0.12);
+  color: var(--ink);
 }
 .board-corner-tag:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .tag-pin-hole {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #cbd5e1;
-  box-shadow: inset 0 1px 1px rgba(0,0,0,0.25);
+  background: var(--surface-2);
+  border: 1px solid #cbd5e1;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.25);
 }
 
-/* Corner Tag Quarantined Drawer / Popover */
+/* Quarantined claims slide-over popover */
 .corner-tag-popover {
   display: none;
   position: absolute;
-  top: calc(100% + 8px);
+  top: 36px;
   right: 0;
-  width: 330px;
+  width: 360px;
   max-width: 90vw;
   background: #ffffff;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   border-radius: var(--r-md);
-  box-shadow: 0 12px 32px rgba(20, 20, 20, 0.14);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
   padding: 16px;
-  z-index: 30;
+  z-index: 50;
+  animation: in 0.15s ease;
 }
 .corner-tag-popover.open {
   display: block;
@@ -943,45 +1818,43 @@ h1.hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 8px;
   margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .popover-title {
-  font: 600 11px var(--font-mono);
+  font: 700 12px var(--font-mono);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  letter-spacing: 0.05em;
+  color: var(--ink);
 }
 .popover-close {
   background: none;
   border: none;
-  color: var(--faint);
-  font-size: 16px;
   cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
+  font-size: 14px;
+  color: var(--muted);
+  padding: 2px 6px;
 }
-.popover-close:hover { color: var(--ink); }
+.popover-close:hover {
+  color: var(--ink);
+}
 .quarantine-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 280px;
+  max-height: 380px;
   overflow-y: auto;
 }
 .quarantine-item {
-  border-bottom: 1px dashed var(--line);
-  padding-bottom: 8px;
-}
-.quarantine-item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
 }
 .quarantine-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 4px;
 }
 .quarantine-cid {
@@ -1021,6 +1894,30 @@ h1.hero {
   border-radius: 4px;
 }
 
+/* Collapsible Lanes Wrapper */
+.board-lanes-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition: grid-template-rows 200ms ease, opacity 200ms ease, visibility 200ms ease;
+}
+.board-lanes-wrap.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.board-lanes-wrap > .board-lanes {
+  overflow: hidden;
+  min-height: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-chevron-icon,
+  .board-lanes-wrap {
+    transition: none !important;
+  }
+}
+
 /* Lanes */
 .board-lanes {
   display: grid;
@@ -1035,13 +1932,22 @@ h1.hero {
 }
 .lane-header {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.lane-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lane-title-heading {
+  display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-  padding-bottom: 6px;
-  border-bottom: 1.5px solid rgba(37, 99, 235, 0.12);
 }
 .lane-title {
   font-family: var(--font-hand);
@@ -1052,6 +1958,35 @@ h1.hero {
   white-space: normal;
   word-break: break-word;
   max-width: 100%;
+}
+.board-lane-tag {
+  font: 600 10px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  color: var(--muted);
+}
+.lane-thin-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--warn-bg);
+  border: 1px solid rgba(183, 121, 31, 0.25);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  font: 500 11.5px var(--font-sans);
+  color: var(--warn);
+  margin-bottom: 10px;
+  align-self: flex-start;
+}
+.lane-no-claims-notice {
+  font: 400 12.5px/1.4 var(--font-sans);
+  color: var(--muted);
+  font-style: italic;
+  padding: 8px 0;
 }
 .lane-thin-tag {
   font: 500 11px var(--font-mono);
@@ -1094,18 +2029,20 @@ h1.hero {
 .lane-notes {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 .note-card {
   background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.035);
-  padding: 18px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 14px 12px;
   position: relative;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
   outline: none;
   cursor: default;
+  width: 100%;
+  box-sizing: border-box;
 }
 .note-pin {
   position: absolute;
@@ -1118,15 +2055,10 @@ h1.hero {
   background: #94a3b8;
   box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 1px 1px #cbd5e1;
 }
-/* Subtle ±0.7° pure CSS tilt */
-.note-card:nth-child(4n+1) { transform: rotate(-0.6deg); }
-.note-card:nth-child(4n+2) { transform: rotate(0.65deg); }
-.note-card:nth-child(4n+3) { transform: rotate(-0.45deg); }
-.note-card:nth-child(4n+4) { transform: rotate(0.5deg); }
 
 .note-card:hover, .note-card:focus-visible {
-  transform: translateY(-2px) rotate(0deg) !important;
-  box-shadow: 0 6px 16px rgba(20, 20, 20, 0.08);
+  box-shadow: var(--shadow-card);
+  border-color: rgba(37, 99, 235, 0.3);
 }
 .note-card:focus-visible {
   outline: 2px solid var(--accent);
@@ -1136,9 +2068,18 @@ h1.hero {
 .note-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-bottom: 8px;
   gap: 6px;
+}
+.note-citation {
+  display: none !important;
+}
+.note-status-check {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ok);
+  line-height: 1;
 }
 .note-cid {
   font: 700 11px var(--font-mono);
@@ -1178,11 +2119,33 @@ h1.hero {
   white-space: nowrap;
 }
 
+/* Verified Card Expander Button */
+.btn-lane-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 500 11.5px var(--font-mono);
+  color: var(--accent);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  cursor: pointer;
+  margin-top: 2px;
+  align-self: flex-start;
+  transition: all 0.15s ease;
+}
+.btn-lane-toggle:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+
 /* Footer Row */
 .board-footer {
   margin-top: 32px;
   padding-top: 20px;
-  border-top: 1px solid rgba(37, 99, 235, 0.15);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1199,42 +2162,6 @@ h1.hero {
   user-select: none;
   filter: drop-shadow(0 2px 4px rgba(31, 138, 91, 0.12));
 }
-
-.board-prose-toggle {
-  flex: 1;
-  min-width: 240px;
-}
-.board-prose-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font: 500 13px var(--font-sans);
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 1px solid rgba(37, 99, 235, 0.2);
-  border-radius: var(--r-pill);
-  padding: 6px 14px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  transition: all 0.15s ease;
-}
-.board-prose-btn::-webkit-details-marker { display: none; }
-.board-prose-btn:hover {
-  background: #dce9ff;
-  border-color: var(--accent);
-}
-.board-prose-content {
-  margin-top: 14px;
-  padding: 14px 18px;
-  background: #ffffff;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  font: 14.5px/1.65 var(--font-sans);
-  color: var(--ink-2);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-}
-
 .board-downloads {
   display: flex;
   align-items: center;
@@ -1248,6 +2175,10 @@ h1.hero {
 
 /* Responsive & Reduced Motion */
 @media (max-width: 760px) {
+  .board-header-right {
+    margin-right: 0;
+    margin-top: 8px;
+  }
   .board-lanes {
     grid-template-columns: 1fr;
   }
@@ -1282,8 +2213,10 @@ h1.hero {
    ======================================================== */
 #report-section {
   display: none;
-  max-width: 820px;
-  margin: 52px auto 80px;
+  max-width: 860px;
+  margin: 44px auto 80px;
+  padding: 0 16px;
+  box-sizing: border-box;
   animation: in 0.4s var(--ease);
 }
 .report-header {
@@ -1516,14 +2449,358 @@ footer {
   .hero-sub { font-size: 16px; }
   .card-sub-strip { flex-direction: column; align-items: flex-start; }
 }
+
+/* ========================================================
+   STAGE-GROUP LOG (replaces flat log-box)
+   ======================================================== */
+
+/* Header controls: "View full log · N" link replaces old step-count pill */
+.log-header-link {
+  font: 500 12px var(--font-mono);
+  color: var(--muted);
+  text-decoration: none;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  outline-offset: 3px;
+}
+.log-header-link:hover { color: var(--ink); border-bottom-color: var(--ink); }
+.log-header-link:focus-visible { outline: 2px solid var(--accent); border-radius: 2px; }
+.log-header-count { font-variant-numeric: tabular-nums; }
+
+/* Stage group accordion wrapper */
+.stage-groups { display: flex; flex-direction: column; gap: 4px; }
+
+.stage-group {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: #fff;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.stage-group.sg-active { border-color: var(--line-strong); }
+.stage-group.sg-error  { border-color: var(--bad); }
+
+/* The disclosure button row */
+.sg-btn {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px 1fr auto 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 8px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--r-sm);
+  transition: background 0.12s;
+  outline-offset: 2px;
+}
+.sg-btn:hover { background: var(--surface-2); }
+.sg-btn:focus-visible { outline: 2px solid var(--accent); }
+
+/* Orb slot — 18×18 px SVG area */
+.sg-orb-slot {
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+/* CSS-dot fallback when orb library fails to load */
+.sg-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; flex-shrink: 0;
+  background: var(--faint);
+  transition: background 0.3s;
+}
+.sg-dot.dot-idle  { background: var(--faint); border: 1.5px solid var(--line-strong); }
+.sg-dot.dot-active { background: var(--accent); animation: dot-pulse 1.4s ease-in-out infinite; }
+.sg-dot.dot-done  { background: var(--ok); }
+.sg-dot.dot-error { background: var(--bad); }
+.sg-dot.dot-loop  { background: var(--warn); animation: dot-pulse 1.2s ease-in-out infinite; }
+
+@keyframes dot-pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.8); }
+}
+
+/* Check icon when stage is done */
+.sg-check {
+  display: none;
+  width: 14px; height: 14px;
+  color: var(--ok);
+  flex-shrink: 0;
+}
+.sg-group-done .sg-check { display: block; }
+.sg-group-done .sg-orb-slot > :not(.sg-check) { display: none; }
+
+/* Name + summary text */
+.sg-name {
+  font: 600 11.5px var(--font-sans);
+  color: var(--ink-2);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.sg-group-active .sg-name { color: var(--ink); }
+.sg-group-done   .sg-name { color: var(--ink); }
+.sg-group-error  .sg-name { color: var(--bad); }
+.sg-group-idle   .sg-name { color: var(--faint); }
+
+.sg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sg-summary {
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.sg-count {
+  font: 500 10.5px var(--font-mono);
+  color: var(--faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 0 5px;
+}
+.sg-duration {
+  font: 10.5px var(--font-mono);
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.sg-loop-chip {
+  font: 600 9.5px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid rgba(183,121,31,0.3);
+  flex-shrink: 0;
+}
+
+/* Chevron */
+.sg-chevron {
+  width: 12px; height: 12px;
+  color: var(--faint);
+  transition: transform 0.2s var(--ease), color 0.15s;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.sg-btn[aria-expanded="true"] .sg-chevron { transform: rotate(180deg); }
+
+/* Expanded log lines area */
+.sg-lines {
+  display: none;
+  border-top: 1px solid var(--line);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px 10px 8px;
+  background: #fafaf8;
+  font: 11.5px/1.6 var(--font-mono);
+  color: var(--ink-2);
+}
+/* height/opacity transition only; never block rendering on animation */
+.sg-lines-enter  { display: block; overflow: hidden; max-height: 0; opacity: 0; }
+.sg-lines-active { transition: max-height 230ms cubic-bezier(.2,.8,.2,1), opacity 230ms cubic-bezier(.2,.8,.2,1); max-height: 220px; opacity: 1; }
+.sg-lines-exit-to { max-height: 0; opacity: 0; }
+
+.sg-lines .log-row { margin-bottom: 2px; word-break: break-word; }
+.sg-lines .log-ts  { color: var(--faint); margin-right: 5px; font-variant-numeric: tabular-nums; }
+.sg-lines .log-tag { font-weight: 600; text-transform: uppercase; margin-right: 4px; }
+
+/* Colour tokens for group headers */
+.sg-planning   { --sg-color: #8b5cf6; }
+.sg-researching{ --sg-color: var(--accent); }
+.sg-drafting   { --sg-color: #0284c7; }
+.sg-verifying  { --sg-color: var(--ok); }
+.sg-synthesizing { --sg-color: #d97706; }
+
+/* Orb SVG color inherits from parent text color */
+.sg-orb-slot svg { color: var(--sg-color, var(--muted)); }
+.sg-group-idle .sg-orb-slot svg { color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sg-lines, .sg-lines-enter, .sg-lines-active { transition: none !important; }
+  .sg-dot { animation: none !important; }
+}
+
+/* ========================================================
+   SLIDE-OVER FULL LOG PANEL
+   ======================================================== */
+.log-scrim {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.18);
+  z-index: 90;
+  backdrop-filter: blur(1px);
+  opacity: 0;
+  transition: opacity 240ms cubic-bezier(.2,.8,.2,1);
+}
+.log-scrim.open { display: block; opacity: 1; }
+
+.log-panel {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 480px;
+  max-width: 100vw;
+  background: #fff;
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 32px rgba(20,20,20,0.10);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 250ms cubic-bezier(.2,.8,.2,1);
+  contain: layout;
+}
+.log-panel.open { transform: translateX(0); }
+
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.log-panel-title {
+  font: 600 13px var(--font-sans);
+  color: var(--ink);
+}
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lp-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 500 11.5px var(--font-sans);
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: all 0.15s;
+  outline-offset: 2px;
+}
+.lp-action-btn:hover { background: #efeeea; border-color: var(--line-strong); color: var(--ink); }
+.lp-action-btn:focus-visible { outline: 2px solid var(--accent); }
+.lp-close-btn {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  outline-offset: 2px;
+}
+.lp-close-btn:hover { color: var(--ink); background: var(--surface-2); }
+.lp-close-btn:focus-visible { outline: 2px solid var(--accent); }
+
+/* Tag filter chips */
+.log-panel-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.lp-chip {
+  font: 500 11px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: all 0.12s;
+  outline-offset: 2px;
+}
+.lp-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.lp-chip:focus-visible { outline: 2px solid var(--accent); }
+.lp-chip[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+/* Panel log scroll region */
+.log-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
+  font: 11.5px/1.65 var(--font-mono);
+  color: var(--ink-2);
+  position: relative;
+  scroll-behavior: smooth;
+}
+.log-panel-body .log-row { margin-bottom: 3px; word-break: break-word; }
+.log-panel-body .log-ts { color: var(--faint); margin-right: 5px; font-variant-numeric: tabular-nums; }
+.log-panel-body .log-tag { font-weight: 600; text-transform: uppercase; margin-right: 4px; }
+
+/* Jump to latest button */
+.lp-jump-btn {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 5px 14px;
+  font: 500 11.5px var(--font-sans);
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(20,20,20,0.18);
+  z-index: 2;
+  white-space: nowrap;
+  outline-offset: 2px;
+}
+.lp-jump-btn:focus-visible { outline: 2px solid var(--accent); }
+.lp-jump-btn.visible { display: inline-flex; }
+
+@media (max-width: 540px) {
+  .log-panel { width: 100vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .log-panel, .log-scrim { transition: none !important; }
+}
 </style>
 </head>
 <body>
 
 <!-- Top Announcement Strip -->
 <div class="top-strip" id="top-strip">
-  <span>Built for the <strong>Mesh API Hackathon</strong> — Multi-agent research with adversarial fact-checking</span>
-  <button type="button" onclick="document.getElementById('top-strip').style.display='none'" aria-label="Close announcement">×</button>
+  <span>Built for the <strong>Mesh API Hackathon</strong> &mdash; Multi-agent research with adversarial fact-checking</span>
+  <button type="button" onclick="document.getElementById('top-strip').style.display='none'" aria-label="Close announcement">&times;</button>
 </div>
 
 <!-- Decorative Background Tiles (Exa Aesthetics) -->
@@ -1551,12 +2828,9 @@ footer {
       <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
     </div>
     <div class="nav-actions">
-      <div class="nav-seg" role="tablist" aria-label="LLM Gateway Provider Switcher">
-        <button type="button" class="nav-seg-btn" id="prov-mesh-btn" role="tab" aria-selected="false" title="Switch to Mesh API" onclick="setProvider('mesh')">
-          <span class="dot" id="dot-mesh"></span> Mesh API
-        </button>
-        <button type="button" class="nav-seg-btn" id="prov-or-btn" role="tab" aria-selected="true" title="Switch to OpenRouter" onclick="setProvider('openrouter')">
-          <span class="dot" id="dot-or"></span> OpenRouter
+      <div class="nav-seg" aria-label="LLM Gateway Provider">
+        <button type="button" class="nav-seg-btn" id="prov-mesh-btn" role="tab" aria-selected="true" title="Mesh API Gateway (z-ai/glm-5.3-flash)">
+          <span class="dot live" id="dot-mesh"></span> Mesh API <span style="font-size:10px; opacity:0.8; margin-left:3px;">(glm-5.3-flash)</span>
         </button>
       </div>
       <button type="button" class="btn btn-dark btn-pill" id="nav-new-btn" onclick="resetForm()">New Research</button>
@@ -1565,7 +2839,7 @@ footer {
 
   <!-- Hero Header -->
   <div class="eyebrow">FROM CURIOSITY TO CLARITY</div>
-  <h1 class="hero">Don't just search. Trace the truth.</h1>
+  <h1 class="hero">Don't just search. Trace the truth. <span id="run-mode-pill" class="run-mode-pill live" style="display:none">Live Run</span></h1>
   <p class="hero-sub">An AI research agent that digs deeper, connects evidence, and turns complex questions into clear, source-backed insights.</p>
 
   <!-- Main Search Card (The Hero) -->
@@ -1631,17 +2905,22 @@ footer {
           </div>
         </div>
 
-        <!-- Live Run Log & Mesh Telemetry -->
+        <!-- Stage-Group Log (replaces flat log) -->
         <div class="log-col">
           <div class="pane-header">
             <span class="pane-title">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-              RUN LOG · MESH USAGE
+              RUN LOG
             </span>
-            <span class="counter-pill" id="log-count">0 steps</span>
+            <button type="button" class="log-header-link" id="log-panel-trigger" aria-label="View full log" onclick="openLogPanel()">
+              View full log &middot; <span class="log-header-count" id="log-count">0</span>
+            </button>
           </div>
-          <div class="log-box" id="log-box" aria-live="polite"></div>
+          <div class="stage-groups" id="stage-groups" role="region" aria-label="Run stages"></div>
         </div>
+
+        <!-- Slide-over full log panel (injected at body level via JS) -->
+
       </div>
     </div>
   </div>
@@ -1652,66 +2931,12 @@ footer {
     <button type="button" onclick="pickExample(0)">EV battery market risks 2026</button>
     <button type="button" onclick="pickExample(1)">Solid-state battery commercialization</button>
     <button type="button" onclick="pickExample(2)">Barriers to heat pump adoption</button>
-    <button type="button" class="sample-cta" onclick="startSampleRun()">▶ See a sample run</button>
+    <button type="button" class="sample-cta" onclick="startSampleRun()">&#9654; See a sample run</button>
   </div>
 
-  <!-- FINDINGS BOARD: notegrid layout (replaces the Executive Summary block) -->
-  <section id="findings-board-section" class="findings-board-wrap" aria-label="Key Findings Board">
-    <div class="findings-board-card">
-      <!-- Hanging Corner Tag -->
-      <div class="board-corner-tag-wrap" id="board-corner-tag-wrap">
-        <div class="board-corner-tag" id="board-corner-tag" role="button" tabindex="0" aria-expanded="false" aria-haspopup="dialog" aria-label="Quarantined unverified and rejected claims" onclick="toggleCornerTag(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleCornerTag(event);}">
-          <div class="tag-pin-hole" aria-hidden="true"></div>
-          <!-- Sticker 2: Magnifier doodle -->
-          <svg class="board-sticker sticker-mag" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span id="corner-tag-label">0 rejected, 0 unverified</span>
-        </div>
-        <div class="corner-tag-popover" id="corner-tag-popover" role="dialog" aria-label="Quarantined Claims">
-          <div class="popover-header">
-            <span class="popover-title">Quarantined Claims</span>
-            <button type="button" class="popover-close" onclick="closeCornerTag()" aria-label="Close quarantined claims panel">✕</button>
-          </div>
-          <div class="quarantine-list" id="quarantine-list"></div>
-        </div>
-      </div>
-
-      <!-- Top Row: Mono Label + Sticker 1 (Sparkle) + Accent Word in Caveat -->
-      <div class="board-top-row">
-        <div class="board-mono-label">
-          <!-- Sticker 1: Sparkle doodle -->
-          <svg class="board-sticker sticker-sparkle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          <span>KEY FINDINGS · PINNED FROM VERIFIED CLAIMS</span>
-          <span class="board-accent-word">curated</span>
-        </div>
-      </div>
-
-      <!-- Headline Finding: one serif sentence with hand-drawn marker underline on key phrase -->
-      <h3 class="board-headline" id="board-headline"></h3>
-
-      <!-- Sub-question Lanes (Notegrid) -->
-      <div class="board-lanes" id="board-lanes"></div>
-
-      <!-- Footer Row: Grounded-% stamp (Sticker 3), Prose toggle, Download buttons -->
-      <div class="board-footer">
-        <div class="board-stamp-wrap" id="board-stamp-wrap"></div>
-        <details class="board-prose-toggle" id="board-prose-toggle">
-          <summary class="board-prose-btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            <span>Read as prose</span>
-          </summary>
-          <div class="board-prose-content" id="board-prose-content"></div>
-        </details>
-        <div class="board-downloads">
-          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-pdf" href="#" download>PDF</a>
-          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-html" href="#" target="_blank">HTML</a>
-          <a class="btn btn-outline btn-pill btn-sm" id="board-dl-md" href="#" download>Markdown</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Structured Report Section -->
+  <!-- Structured Report Section (Results View) -->
   <section id="report-section">
+    <!-- 1. Summary and Report -->
     <div class="report-header">
       <div class="report-eyebrow">FINAL VERIFIED REPORT</div>
       <h2 class="report-title" id="report-title"></h2>
@@ -1720,7 +2945,63 @@ footer {
 
     <div class="report-content" id="report-body"></div>
 
-    <!-- Sources Section -->
+    <!-- 2. Findings Board -->
+    <section id="findings-board-section" class="findings-board-wrap" aria-label="Key Findings Board">
+      <div class="findings-board-card">
+        <!-- Hanging Corner Tag -->
+        <div class="board-corner-tag-wrap" id="board-corner-tag-wrap">
+          <div class="board-corner-tag" id="board-corner-tag" role="button" tabindex="0" aria-expanded="false" aria-haspopup="dialog" aria-label="Quarantined unverified and rejected claims" onclick="toggleCornerTag(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleCornerTag(event);}">
+            <div class="tag-pin-hole" aria-hidden="true"></div>
+            <!-- Sticker 2: Magnifier doodle -->
+            <svg class="board-sticker sticker-mag" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span id="corner-tag-label">0 rejected, 0 unverified</span>
+          </div>
+          <div class="corner-tag-popover" id="corner-tag-popover" role="dialog" aria-label="Quarantined Claims">
+            <div class="popover-header">
+              <span class="popover-title">Quarantined Claims</span>
+              <button type="button" class="popover-close" onclick="closeCornerTag()" aria-label="Close quarantined claims panel">&#10005;</button>
+            </div>
+            <div class="quarantine-list" id="quarantine-list"></div>
+          </div>
+        </div>
+
+        <!-- Top Row: Eyebrow + Handwritten Accent + Right-aligned Counter (Collapsible Toggle) -->
+        <button type="button" class="board-top-row" id="board-toggle-btn" aria-expanded="true" aria-controls="board-lanes" onclick="toggleBoardLanes()" aria-label="Toggle evidence board findings">
+          <div class="board-header-left">
+            <div class="board-eyebrow">
+              <!-- Sticker 1: Sparkle doodle -->
+              <svg class="board-sticker sticker-sparkle" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              <span>EVIDENCE BEHIND THE ANSWER</span>
+              <span class="board-accent-word">checked</span>
+            </div>
+          </div>
+          <div class="board-header-right">
+            <span class="board-verified-count" id="board-verified-count">0 verified</span>
+            <svg class="board-chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </button>
+
+        <!-- Headline Finding: one serif sentence with hand-drawn marker underline on key phrase -->
+        <h3 class="board-headline" id="board-headline"></h3>
+
+        <!-- Sub-question Lanes (Notegrid) -->
+        <div class="board-lanes-wrap" id="board-lanes-wrap">
+          <div class="board-lanes" id="board-lanes"></div>
+        </div>
+
+        <!-- Footer Row: Grounded-% stamp (Sticker 3), Download buttons -->
+        <div class="board-footer">
+          <div class="board-stamp-wrap" id="board-stamp-wrap"></div>
+          <div class="board-downloads">
+            <a class="btn btn-outline btn-pill btn-sm" id="board-dl-pdf" href="#" download>PDF</a>
+            <a class="btn btn-outline btn-pill btn-sm" id="board-dl-html" href="#" target="_blank">HTML</a>
+            <a class="btn btn-outline btn-pill btn-sm" id="board-dl-md" href="#" download>Markdown</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Cited Sources -->
     <div style="margin-top: 36px;">
       <h3 style="font: 500 22px var(--font-serif); margin-bottom: 12px;">Cited Sources</h3>
       <div class="sources-list" id="sources-list"></div>
@@ -1733,16 +3014,16 @@ footer {
       <a class="btn btn-outline btn-pill" id="dl-md" href="#" download>Markdown Export</a>
     </div>
 
-    <!-- Decision Trail Accordion -->
+    <!-- 5. Decision Trail Accordion -->
     <div class="decision-trail">
       <button type="button" class="trail-toggle" onclick="toggleTrail()">
         <span>Auditable Decision Trail (Searches, Quotes, Reasonings)</span>
-        <span id="trail-icon">▼</span>
+        <span id="trail-icon">&#9660;</span>
       </button>
       <div class="trail-body" id="trail-body"></div>
     </div>
 
-    <!-- Follow-up QA -->
+    <!-- 6. Follow-up QA -->
     <div class="followup-card">
       <h3>Ask a follow-up question</h3>
       <p>Answers are grounded strictly in this run's verified claims. No new web searches are made.</p>
@@ -1756,10 +3037,38 @@ footer {
 
 </div>
 
+
+<!-- Full-log Slide-over panel (body-level for correct stacking) -->
+<div class="log-scrim" id="log-scrim" aria-hidden="true" onclick="closeLogPanel()"></div>
+<aside class="log-panel" id="log-panel" role="dialog" aria-modal="true" aria-label="Full run log" tabindex="-1">
+  <div class="log-panel-header">
+    <span class="log-panel-title">Full Run Log</span>
+    <div class="log-panel-actions">
+      <button type="button" class="lp-action-btn" id="lp-copy-btn" onclick="lpCopyLog()" title="Copy log to clipboard">Copy log</button>
+      <button type="button" class="lp-action-btn" id="lp-dl-btn" onclick="lpDownloadLog()" title="Download as .txt">Download .txt</button>
+      <button type="button" class="lp-close-btn" id="lp-close-btn" onclick="closeLogPanel()" aria-label="Close log panel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="log-panel-filters" role="group" aria-label="Filter by tag">
+    <button type="button" class="lp-chip" aria-pressed="true" data-filter="all" onclick="lpSetFilter('all',this)">All</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="planner" onclick="lpSetFilter('planner',this)">Planner</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="researcher" onclick="lpSetFilter('researcher',this)">Researcher</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="drafter" onclick="lpSetFilter('drafter',this)">Drafter</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="verifier" onclick="lpSetFilter('verifier',this)">Verifier</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="mesh" onclick="lpSetFilter('mesh',this)">Mesh</button>
+    <button type="button" class="lp-chip" aria-pressed="false" data-filter="other" onclick="lpSetFilter('other',this)">Other</button>
+  </div>
+  <div class="log-panel-body" id="lp-body" aria-live="polite" aria-atomic="false">
+    <div id="lp-lines"></div>
+  </div>
+  <button type="button" class="lp-jump-btn" id="lp-jump" onclick="lpJumpToLatest()" aria-label="Jump to latest">&#8595; Jump to latest</button>
+</aside>
 <!-- Footer -->
 <footer>
   <div class="container">
-    Every LLM call is routed through <strong>Mesh API</strong> · Built with LangGraph, Tavily & FastAPI · No invented claims
+    Every LLM call is routed through <strong>Mesh API</strong> &middot; Built with LangGraph, Tavily & FastAPI &middot; No invented claims
   </div>
 </footer>
 
@@ -1776,7 +3085,7 @@ const EXAMPLES = [
 
 let state = {
   live: false,
-  provider: 'openrouter',
+  provider: 'mesh',
   running: false,
   runId: null,
   t0: 0,
@@ -1790,30 +3099,284 @@ let state = {
   stepCount: 0
 };
 
+/* ==============================================================
+   NORMALIZED LOG STORE — single source of truth for all views
+   ============================================================== */
+const logEntries = []; // [{t, tag, text, stage, rawText}]
+
+/* Stage group definitions */
+const STAGE_DEFS = [
+  { id: 'planning',    label: 'Planning',    tags: ['system','planner'],                      orbState: 'reasoning',  cls: 'sg-planning' },
+  { id: 'researching', label: 'Researching', tags: ['researcher'],                             orbState: 'searching',  cls: 'sg-researching' },
+  { id: 'drafting',    label: 'Drafting',    tags: ['drafter','relevance'],                   orbState: 'working',    cls: 'sg-drafting' },
+  { id: 'verifying',   label: 'Verifying',   tags: ['verifier','coverage','contradict'],      orbState: 'working',    cls: 'sg-verifying' },
+  { id: 'synthesizing',label: 'Synthesizing',tags: ['synthesizer'],                           orbState: 'compacting', cls: 'sg-synthesizing' }
+];
+// Route log lines by prefix:
+// planner* -> Planning, researcher* -> Researching, drafter*/relevance* -> Drafting,
+// verifier*/coverage*/contradict* -> Verifying, synthesizer* -> Synthesizing.
+// Unknown tags return null (neutral "Other" bucket visible only in full-log panel).
+function stageFromTag(tag) {
+  if (!tag) return null;
+  const t = String(tag).toLowerCase().trim();
+  if (t === 'system' || t.startsWith('planner')) return 'planning';
+  if (t.startsWith('researcher')) return 'researching';
+  if (t.startsWith('drafter') || t.startsWith('relevance')) return 'drafting';
+  if (t.startsWith('verifier') || t.startsWith('coverage') || t.startsWith('contradict')) return 'verifying';
+  if (t.startsWith('synthesizer')) return 'synthesizing';
+  return null;
+}
+
+/* ==============================================================
+   ORB MANAGEMENT (graceful fallback to CSS dot)
+   ============================================================== */
+const _orbs = {};    // stageId -> { orb|null, svgEl, dotEl, state }
+let _mountOrb = null;
+const _prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+// Try to receive mountOrb from the module shim
+if (window._orbReady) { _mountOrb = window._mountOrb; }
+else { document.addEventListener('orb-ready', () => { _mountOrb = window._mountOrb; Object.values(_orbs).forEach(o => { if (o.pendingState) _setOrbState(o.stageId, o.pendingState, o.pendingLabel); }); }); }
+
+function _setOrbState(stageId, orbState, label) {
+  const entry = _orbs[stageId];
+  if (!entry) return;
+  entry.pendingState = orbState;
+  entry.pendingLabel = label;
+
+  const svg = entry.svgEl;
+  const dot = entry.dotEl;
+
+  if (_mountOrb && svg) {
+    try {
+      if (entry.orb) { entry.orb.destroy(); entry.orb = null; }
+      svg.style.display = '';
+      dot.style.display = 'none';
+      const shouldPause = _prefersReducedMotion.matches;
+      entry.orb = _mountOrb(svg, { state: orbState, size: 16, speed: 0.9, label, paused: shouldPause });
+      if (shouldPause) entry.orb.pause();
+      return;
+    } catch(e) { /* fall through to CSS dot */ }
+  }
+
+  // CSS dot fallback
+  if (svg) svg.style.display = 'none';
+  dot.style.display = '';
+  dot.className = 'sg-dot ' + { idle:'dot-idle', active:'dot-active', done:'dot-done', error:'dot-error', loop:'dot-loop' }[
+    orbState === 'idle' ? 'idle' : ['reasoning','searching','working','compacting'].includes(orbState) ? 'active' : orbState
+  ] || 'dot-idle';
+}
+
+_prefersReducedMotion.addEventListener('change', () => {
+  Object.entries(_orbs).forEach(([sid, entry]) => {
+    if (entry.orb) {
+      if (_prefersReducedMotion.matches) entry.orb.pause(); else entry.orb.play();
+    }
+  });
+});
+
+/* ==============================================================
+   STAGE GROUP DOM CONSTRUCTION & STATE MACHINE
+   ============================================================== */
+const _sgState = {};  // stageId -> 'idle'|'active'|'done'|'error'|'loop'
+const _sgSummary = {};
+const _sgCount = {};
+const _sgStart = {};
+const _sgLoopN = {};
+
+function _buildStageGroups() {
+  const container = $('#stage-groups');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const def of STAGE_DEFS) {
+    const g = document.createElement('div');
+    g.className = `stage-group sg-group-idle ${def.cls}`;
+    g.id = 'sg-' + def.id;
+    g.innerHTML = `
+      <button type="button" class="sg-btn" id="sgbtn-${def.id}"
+              aria-expanded="false" aria-controls="sglines-${def.id}"
+              onclick="sgToggle('${def.id}')">
+        <span class="sg-orb-slot" id="sg-orb-${def.id}">
+          <svg id="sg-svg-${def.id}" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="display:none" aria-hidden="true"></svg>
+          <span class="sg-dot dot-idle" id="sg-dot-${def.id}" aria-hidden="true"></span>
+          <svg class="sg-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+        <span class="sg-name">${def.label}</span>
+        <span class="sg-meta">
+          <span class="sg-summary" id="sg-sum-${def.id}"></span>
+          <span class="sg-loop-chip" id="sg-loop-${def.id}" style="display:none"></span>
+          <span class="sg-duration" id="sg-dur-${def.id}" style="display:none"></span>
+          <span class="sg-count" id="sg-cnt-${def.id}" style="display:none">0</span>
+        </span>
+        <svg class="sg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="sg-lines" id="sglines-${def.id}" role="log" aria-live="polite" aria-atomic="false"></div>
+    `;
+    container.appendChild(g);
+    _sgState[def.id] = 'idle';
+    _sgSummary[def.id] = '';
+    _sgCount[def.id] = 0;
+    _orbs[def.id] = {
+      stageId: def.id,
+      svgEl: g.querySelector('#sg-svg-' + def.id),
+      dotEl: g.querySelector('#sg-dot-' + def.id),
+      orb: null,
+      pendingState: null,
+      pendingLabel: null
+    };
+  }
+}
+
+function sgActivate(stageId) {
+  if (_sgState[stageId] === 'done') return; // never re-activate finished
+  _sgState[stageId] = 'active';
+  _sgStart[stageId] = _sgStart[stageId] || Date.now();
+  const g = $('#sg-' + stageId);
+  if (!g) return;
+  g.className = g.className.replace(/sg-group-\w+/, 'sg-group-active');
+  g.classList.add('sg-active');
+  const def = STAGE_DEFS.find(d => d.id === stageId);
+  const label = def ? `${def.label}, in progress` : stageId;
+  _setOrbState(stageId, def ? def.orbState : 'working', label);
+}
+
+function sgLoop(stageId, loopN) {
+  _sgState[stageId] = 'active';
+  _sgStart[stageId] = Date.now(); // reset timer for loop
+  _sgLoopN[stageId] = loopN;
+  const g = $('#sg-' + stageId);
+  if (!g) return;
+  g.className = g.className.replace(/sg-group-\w+/, 'sg-group-active');
+  g.classList.add('sg-active');
+  const loopChip = $('#sg-loop-' + stageId);
+  if (loopChip) { loopChip.textContent = `loop ${loopN}`; loopChip.style.display = ''; }
+  _setOrbState(stageId, 'retrying', `Researching, retrying (loop ${loopN})`);
+  sgSetSummary(stageId, 'not enough proof, searching again');
+}
+
+function sgDone(stageId) {
+  if (_sgState[stageId] === 'done') return;
+  _sgState[stageId] = 'done';
+  const rawElapsed = _sgStart[stageId] ? (Date.now() - _sgStart[stageId]) / 1000 : 0.5;
+  const elapsedSec = Math.max(0.1, rawElapsed);
+  const elapsed = elapsedSec.toFixed(1) + 's';
+  const g = $('#sg-' + stageId);
+  if (!g) return;
+  g.className = g.className.replace(/sg-group-\w+/, 'sg-group-done');
+  g.classList.remove('sg-active', 'sg-error');
+  const dur = $('#sg-dur-' + stageId);
+  if (dur) { dur.textContent = elapsed; dur.style.display = ''; }
+  // Destroy orb, show check icon
+  const entry = _orbs[stageId];
+  if (entry && entry.orb) { entry.orb.destroy(); entry.orb = null; }
+  if (entry && entry.svgEl) entry.svgEl.style.display = 'none';
+  if (entry && entry.dotEl) entry.dotEl.style.display = 'none';
+}
+
+function sgError(stageId, msg) {
+  _sgState[stageId] = 'error';
+  const g = $('#sg-' + stageId);
+  if (!g) return;
+  g.className = g.className.replace(/sg-group-\w+/, 'sg-group-error');
+  g.classList.add('sg-error');
+  const entry = _orbs[stageId];
+  if (entry && entry.orb) { entry.orb.destroy(); entry.orb = null; }
+  if (entry && entry.svgEl) entry.svgEl.style.display = 'none';
+  if (entry && entry.dotEl) entry.dotEl.style.display = 'none';
+  sgSetSummary(stageId, msg || 'error');
+}
+
+function sgSetSummary(stageId, text) {
+  _sgSummary[stageId] = text;
+  const el = $('#sg-sum-' + stageId);
+  if (el) el.textContent = text;
+}
+
+function sgBumpCount(stageId) {
+  _sgCount[stageId] = (_sgCount[stageId] || 0) + 1;
+  const el = $('#sg-cnt-' + stageId);
+  if (el) { el.textContent = _sgCount[stageId]; el.style.display = ''; }
+}
+
+function sgToggle(stageId) {
+  const btn = $('#sgbtn-' + stageId);
+  const lines = $('#sglines-' + stageId);
+  if (!btn || !lines) return;
+  const isOpen = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+  if (!isOpen) {
+    // Expand: height/opacity animation
+    lines.style.display = 'block';
+    lines.style.overflow = 'hidden';
+    lines.style.maxHeight = '0';
+    lines.style.opacity = '0';
+    requestAnimationFrame(() => {
+      lines.style.transition = 'max-height 230ms cubic-bezier(.2,.8,.2,1), opacity 230ms cubic-bezier(.2,.8,.2,1)';
+      lines.style.maxHeight = '220px';
+      lines.style.opacity = '1';
+    });
+    // Auto-scroll to bottom of lines
+    setTimeout(() => { lines.scrollTop = lines.scrollHeight; }, 240);
+  } else {
+    lines.style.transition = 'max-height 200ms cubic-bezier(.2,.8,.2,1), opacity 200ms cubic-bezier(.2,.8,.2,1)';
+    lines.style.maxHeight = '0';
+    lines.style.opacity = '0';
+    setTimeout(() => { lines.style.display = 'none'; lines.style.transition = ''; lines.style.maxHeight = ''; }, 200);
+  }
+}
+
+/* Keyboard: expand/collapse with Enter/Space (already handled by button),
+   also make the group navigable as a disclosure widget */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const panel = $('#log-panel');
+    if (panel && panel.classList.contains('open')) { closeLogPanel(); return; }
+    if (typeof closeCornerTag === 'function') closeCornerTag();
+  }
+});
+
+/* ==============================================================
+   STAGE-GROUP SUMMARY TRACKER (computed from events)
+   ============================================================== */
+const _stageCounters = {
+  planning:    { subquestions: 0 },
+  researching: { searches: 0, passages: 0 },
+  drafting:    { claims: 0, filtered: 0 },
+  verifying:   { verified: 0, unverified: 0, rejected: 0 },
+  synthesizing:{}
+};
+
+function _refreshSummary(stageId) {
+  const c = _stageCounters[stageId];
+  let s = '';
+  if (stageId === 'planning')    s = c.subquestions ? `${c.subquestions} sub-question${c.subquestions===1?'':'s'}` : '';
+  if (stageId === 'researching') s = [c.searches && `${c.searches} search${c.searches===1?'':'es'}`, c.passages && `${c.passages} passages`].filter(Boolean).join(' \u00B7 ');
+  if (stageId === 'drafting')    s = [c.claims && `${c.claims} claims drafted`, c.filtered && `${c.filtered} off-topic filtered`].filter(Boolean).join(' \u00B7 ');
+  if (stageId === 'verifying')   s = `${c.verified} verified \u00B7 ${c.unverified} unverified \u00B7 ${c.rejected} rejected`;
+  if (stageId === 'synthesizing')s = _sgState['synthesizing'] === 'done' ? 'report ready' : (_sgSummary['synthesizing'] || 'writing cited report');
+  if (s && _sgState[stageId] !== 'loop') sgSetSummary(stageId, s);
+}
+
 function updateProviderUI() {
-  const isMesh = state.provider === 'mesh';
   const meshBtn = $('#prov-mesh-btn');
-  const orBtn = $('#prov-or-btn');
-  if (meshBtn && orBtn) {
-    meshBtn.setAttribute('aria-selected', isMesh ? 'true' : 'false');
-    orBtn.setAttribute('aria-selected', isMesh ? 'false' : 'true');
+  if (meshBtn) {
+    meshBtn.setAttribute('aria-selected', 'true');
   }
 
   const s = state.statusData;
   if (s) {
     const meshLive = Boolean(s.mesh);
-    const orLive = Boolean(s.openrouter);
     const dotMesh = $('#dot-mesh');
-    const dotOr = $('#dot-or');
     if (dotMesh) dotMesh.className = 'dot' + (meshLive ? ' live' : '');
-    if (dotOr) dotOr.className = 'dot' + (orLive ? ' live' : '');
-    state.live = isMesh ? meshLive : orLive;
+    state.live = meshLive;
   }
 }
 
 function setProvider(p) {
-  state.provider = p;
+  state.provider = 'mesh';
   updateProviderUI();
+  const provDesc = 'Mesh API (z-ai/glm-5.3-flash)';
+  addLog('system', `Active provider set to: <b>${esc(provDesc)}</b>`);
 }
 
 // Check backend status
@@ -1821,16 +3384,12 @@ fetch('/api/status')
   .then(r => r.json())
   .then(s => {
     state.statusData = s;
-    if (s.provider && (s.provider === 'mesh' || s.provider === 'openrouter')) {
-      state.provider = s.provider;
-    }
+    state.provider = 'mesh';
     updateProviderUI();
   })
   .catch(() => {
     const dotMesh = $('#dot-mesh');
-    const dotOr = $('#dot-or');
     if (dotMesh) dotMesh.className = 'dot';
-    if (dotOr) dotOr.className = 'dot';
   });
 
 // Input handling
@@ -1868,8 +3427,8 @@ function renderFileChips() {
   const container = $('#file-chips');
   container.innerHTML = state.uploadedFiles.map((f, i) => `
     <span class="file-chip">
-      <span>📄 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)</span>
-      <button type="button" onclick="removeFile(${i})" title="Remove">✕</button>
+      <span>\uD83D\uDCC4 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)</span>
+      <button type="button" onclick="removeFile(${i})" title="Remove">&#10005;</button>
     </span>
   `).join('');
   $('#attach-btn').classList.toggle('has-files', state.uploadedFiles.length > 0);
@@ -1892,7 +3451,17 @@ function resetForm() {
   $('#report-section').style.display = 'none';
   const fb = $('#findings-board-section');
   if (fb) { fb.style.display = 'none'; fb.classList.remove('is-visible'); }
+  if (typeof setBoardLanesExpanded === 'function') setBoardLanesExpanded(true);
+  if (typeof resetDecisionTrail === 'function') resetDecisionTrail();
   if (typeof closeCornerTag === 'function') closeCornerTag();
+  if (typeof closeLogPanel === 'function') closeLogPanel();
+  const modePill = $('#run-mode-pill');
+  if (modePill) modePill.style.display = 'none';
+  state.laneCounts = {};
+  state.thinSubqs = new Set();
+  state.counts = { verified: 0, unverified: 0, rejected: 0 };
+  updateVerdictCounters();
+  logEntries.length = 0;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1905,7 +3474,7 @@ function startSampleRun() {
 function submitQuery() {
   const q = qInput.value.trim();
   if (!q || state.running) return;
-  startRun(q, !state.live);
+  startRun(q, false);
 }
 
 // Stage rail
@@ -1921,7 +3490,7 @@ function setStage(idx, isDone = false) {
     const icon = node.querySelector('.stage-icon');
     if (i < idx || (i === idx && isDone)) {
       node.className = 'stage-node done';
-      icon.textContent = '✓';
+      icon.textContent = '\u2713';
     } else if (i === idx) {
       node.className = 'stage-node active';
       icon.textContent = String(i + 1);
@@ -1932,38 +3501,246 @@ function setStage(idx, isDone = false) {
   }
 }
 
-// Log utility
+/* ==============================================================
+   UNIFIED addLog — writes to logEntries, stage groups, and panel
+   ============================================================== */
 function addLog(tag, msg, cls = '') {
   state.stepCount++;
-  $('#log-count').textContent = state.stepCount + ' steps';
-  const box = $('#log-box');
-  const d = document.createElement('div');
-  d.className = 'log-row';
-  const sec = ((Date.now() - state.t0) / 1000).toFixed(1).padStart(4, '0');
-  d.innerHTML = `<span class="log-ts">[${sec}s]</span><span class="log-tag ${tag.toLowerCase()}">${esc(tag)}</span> ${msg}`;
-  if (cls) d.classList.add(cls);
-  box.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  // Update header count
+  const countEl = $('#log-count');
+  if (countEl) countEl.textContent = state.stepCount;
+
+  const sec = ((Date.now() - state.t0) / 1000).toFixed(1).padStart(5,'0');
+  const tagLower = (tag || '').toLowerCase();
+
+  // Determine stage (prefix routing; unknown tags go to neutral 'other' bucket)
+  const stage = stageFromTag(tagLower);
+  const rawText = typeof msg === 'string' ? msg.replace(/<[^>]+>/g, '') : msg;
+
+  const entry = { t: sec, tag: tagLower, text: msg, rawText: rawText, stage: stage || 'other', cls };
+  logEntries.push(entry);
+
+  // Build log-row HTML
+  const rowHtml = `<div class="log-row${cls ? ' ' + cls : ''}"><span class="log-ts">[${sec}s]</span><span class="log-tag ${tagLower}">${esc(tag)}</span> ${msg}</div>`;
+
+  // Append to the relevant stage-group lines (only if recognized stage, never default to planning)
+  if (stage) {
+    const sgLines = $('#sglines-' + stage);
+    if (sgLines) {
+      sgLines.insertAdjacentHTML('beforeend', rowHtml);
+      // If open, scroll to bottom
+      if ($('#sgbtn-' + stage) && $('#sgbtn-' + stage).getAttribute('aria-expanded') === 'true') {
+        sgLines.scrollTop = sgLines.scrollHeight;
+      }
+    }
+    sgBumpCount(stage);
+  }
+
+  // Append to slide-over panel
+  lpAppendRow(entry, rowHtml);
+}
+
+/* ==============================================================
+   SLIDE-OVER PANEL LOGIC
+   ============================================================== */
+let _lpFilter = 'all';
+let _lpUserScrolledUp = false;
+let _lpOpen = false;
+let _lpTriggerEl = null;
+
+function openLogPanel() {
+  _lpTriggerEl = document.activeElement;
+  const panel = $('#log-panel');
+  const scrim = $('#log-scrim');
+  if (!panel) return;
+  _lpOpen = true;
+  scrim && scrim.classList.add('open');
+  scrim && scrim.removeAttribute('aria-hidden');
+  panel.classList.add('open');
+  panel.removeAttribute('aria-hidden');
+  // Render all existing entries
+  lpRenderAll();
+  // Focus management: move into panel
+  setTimeout(() => {
+    const closeBtn = $('#lp-close-btn');
+    if (closeBtn) closeBtn.focus();
+  }, 260);
+  // Set up scroll spy
+  const body = $('#lp-body');
+  if (body) {
+    body.addEventListener('scroll', _lpScrollSpy, { passive: true });
+  }
+  // Focus trap
+  panel.addEventListener('keydown', _lpFocusTrap);
+}
+
+function closeLogPanel() {
+  const panel = $('#log-panel');
+  const scrim = $('#log-scrim');
+  _lpOpen = false;
+  panel && panel.classList.remove('open');
+  scrim && scrim.classList.remove('open');
+  scrim && scrim.setAttribute('aria-hidden', 'true');
+  if (_lpTriggerEl) { try { _lpTriggerEl.focus(); } catch(e){} }
+  const body = $('#lp-body');
+  if (body) body.removeEventListener('scroll', _lpScrollSpy);
+  panel && panel.removeEventListener('keydown', _lpFocusTrap);
+}
+
+function _lpFocusTrap(e) {
+  if (e.key !== 'Tab') return;
+  const panel = $('#log-panel');
+  const focusable = Array.from(panel.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])')).filter(el => !el.disabled);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey ? document.activeElement === first : document.activeElement === last) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+  }
+}
+
+function _lpScrollSpy() {
+  const body = $('#lp-body');
+  if (!body) return;
+  const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 30;
+  _lpUserScrolledUp = !atBottom;
+  const jumpBtn = $('#lp-jump');
+  if (jumpBtn) jumpBtn.style.display = _lpUserScrolledUp ? '' : 'none';
+}
+
+function lpJumpToLatest() {
+  const body = $('#lp-body');
+  if (body) { body.scrollTop = body.scrollHeight; }
+  _lpUserScrolledUp = false;
+  const jumpBtn = $('#lp-jump');
+  if (jumpBtn) jumpBtn.style.display = 'none';
+}
+
+function lpSetFilter(filter, btn) {
+  _lpFilter = filter;
+  $$('.lp-chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.filter === filter ? 'true' : 'false'));
+  lpRenderAll();
+}
+
+function lpRenderAll() {
+  const lines = $('#lp-lines');
+  if (!lines) return;
+  const filtered = _lpFilter === 'all' ? logEntries : logEntries.filter(e => {
+    if (_lpFilter === 'mesh') return e.tag === 'mesh';
+    if (_lpFilter === 'other') return e.stage === 'other' || (!e.stage || e.stage === 'other');
+    return e.tag === _lpFilter || (e.stage && e.stage.startsWith(_lpFilter));
+  });
+  lines.innerHTML = filtered.map(e => {
+    const tagLower = (e.tag || '').toLowerCase();
+    return `<div class="log-row${e.cls?' '+e.cls:''}"><span class="log-ts">[${e.t}s]</span><span class="log-tag ${tagLower}">${esc(e.tag)}</span> ${e.text}</div>`;
+  }).join('');
+  const body = $('#lp-body');
+  if (body && !_lpUserScrolledUp) body.scrollTop = body.scrollHeight;
+}
+
+function lpAppendRow(entry, rowHtml) {
+  if (!_lpOpen) return;
+  const filter = _lpFilter;
+  const tagLower = (entry.tag || '').toLowerCase();
+  const show = filter === 'all' ||
+    (filter === 'mesh' && tagLower === 'mesh') ||
+    (filter === 'other' && (entry.stage === 'other' || !entry.stage)) ||
+    (tagLower === filter) ||
+    (entry.stage && entry.stage.startsWith(filter));
+  if (!show) return;
+  const lines = $('#lp-lines');
+  if (lines) lines.insertAdjacentHTML('beforeend', rowHtml);
+  const body = $('#lp-body');
+  if (body && !_lpUserScrolledUp) body.scrollTop = body.scrollHeight;
+}
+
+function lpCopyLog() {
+  const text = logEntries.map(e => `[${e.t}s] [${e.tag.toUpperCase()}] ${e.rawText}`).join('\n');
+  navigator.clipboard && navigator.clipboard.writeText(text).then(() => {
+    const btn = $('#lp-copy-btn');
+    if (btn) { const old = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = old, 1800); }
+  });
+}
+
+function lpDownloadLog() {
+  const text = logEntries.map(e => `[${e.t}s] [${e.tag.toUpperCase()}] ${e.rawText}`).join('\n');
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `deeptrace-log-${state.runId || 'run'}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// State tracking for lane status lifecycle
+let _subqList = [];
+let _claimToSubq = {};
+let _laneClaims = {};      // subqId -> Set of claim cids
+let _laneVerdicts = {};    // subqId -> Set of cids that received a verdict
+let _laneStatuses = {};    // subqId -> current status string
+let _loopingLanes = new Set();
+let _noEvidenceLanes = new Set();
+let _researchEvidenceReceived = new Set();
+let _draftReceived = new Set();
+let _weakLanes = new Set();
+
+function setLaneStatus(subqId, statusText) {
+  const el = $('#status-' + subqId);
+  if (!el) return;
+  _laneStatuses[subqId] = statusText;
+  el.textContent = statusText;
+  el.className = 'subq-status';
+  if (statusText === 'Searching again') {
+    el.classList.add('looping');
+  } else if (statusText === 'Done') {
+    el.classList.add('done');
+  } else if (statusText === 'No evidence') {
+    el.classList.add('no-evidence');
+  }
+}
+
+function showLaneActiveQuery(subqId, queryText) {
+  const el = $('#qline-' + subqId);
+  if (!el) return;
+  el.textContent = queryText || '';
+  el.style.display = queryText ? 'block' : 'none';
+}
+
+function hideLaneActiveQuery(subqId) {
+  const el = $('#qline-' + subqId);
+  if (!el) return;
+  el.textContent = '';
+  el.style.display = 'none';
 }
 
 // Ensure sub-question lane
-function getOrCreateLane(subqId, title = '') {
-  if (state.activeLanes[subqId]) return state.activeLanes[subqId];
+function getOrCreateLane(subqId, title = '', tag = '') {
+  let lane = state.activeLanes[subqId];
+  if (!state.laneCounts) state.laneCounts = {};
+  if (!state.laneCounts[subqId]) {
+    state.laneCounts[subqId] = { passages: 0, drafted: 0, off_topic_dropped: 0, verified: 0, unverified: 0, rejected: 0 };
+  }
+  if (!_laneClaims[subqId]) _laneClaims[subqId] = new Set();
+  if (!_laneVerdicts[subqId]) _laneVerdicts[subqId] = new Set();
+  if (lane) {
+    if (title && title !== subqId) {
+      setLaneTitle(subqId, title);
+    }
+    return lane;
+  }
   const container = $('#subq-lanes');
-  const lane = document.createElement('div');
+  lane = document.createElement('div');
   lane.className = 'subq-lane';
   lane.id = 'lane-' + subqId;
   lane.innerHTML = `
     <div class="subq-head">
       <span class="subq-id">${esc(subqId)}</span>
-      <span class="subq-text">${esc(title || subqId)}</span>
-      <span class="subq-status" id="status-${esc(subqId)}">Ready</span>
+      <div class="subq-title-wrap">
+        <span class="subq-text">${esc(title || subqId)}</span>
+      </div>
+      <span class="subq-status" id="status-${esc(subqId)}"></span>
     </div>
-    <div class="subq-query-line" id="qline-${esc(subqId)}" style="display:none">
-      <span id="qtext-${esc(subqId)}"></span>
-      <span class="provider-badge" id="pbadge-${esc(subqId)}">web</span>
-    </div>
-    <div class="subq-counts-bar" id="counts-${esc(subqId)}" style="display:none"></div>
+    <div class="subq-active-query" id="qline-${esc(subqId)}" style="display:none"></div>
     <div class="lane-reason-box" id="reason-${esc(subqId)}" style="display:none"></div>
     <div class="claims-list" id="claims-${esc(subqId)}"></div>
   `;
@@ -1972,7 +3749,35 @@ function getOrCreateLane(subqId, title = '') {
   return lane;
 }
 
-// Add claim card
+function setLaneTitle(subqId, title) {
+  if (!title) return;
+  const lane = state.activeLanes[subqId];
+  if (lane) {
+    const textEl = lane.querySelector('.subq-text');
+    if (textEl && title !== subqId) {
+      textEl.textContent = title;
+    }
+  }
+}
+
+function setLaneTag(subqId, tag) {
+  // Tags disabled
+}
+
+function updateVerdictCounters() {
+  const el = $('#verified-counter');
+  if (!el) return;
+  const v = (state.counts && state.counts.verified) || 0;
+  const uv = (state.counts && state.counts.unverified) || 0;
+  const rej = (state.counts && state.counts.rejected) || 0;
+  el.innerHTML = `<span style="color:var(--ok); font-weight:600;">${v} Verified</span> \u00B7 <span style="color:var(--warn); font-weight:500;">${uv} Unverified</span> \u00B7 <span style="color:var(--bad); font-weight:500;">${rej} Rejected</span>`;
+}
+
+function updateLaneCountsBar(subqId) {
+  // Counters line removed from sub-question card header per specification
+}
+
+// Add claim card (Drafted stage)
 function renderClaim(c, subqId) {
   if (state.claims[c.cid]) return;
   const lane = getOrCreateLane(subqId);
@@ -1981,78 +3786,152 @@ function renderClaim(c, subqId) {
   const card = document.createElement('div');
   card.className = 'claim-card';
   card.id = 'card-' + c.cid;
+  card.setAttribute('data-subq', subqId);
+  card.setAttribute('aria-live', 'polite');
+
   const srcHtml = (c.sources || []).map(s => `<span class="source-chip">${esc(s)}</span>`).join('');
 
   card.innerHTML = `
     <div><span class="claim-cid">${esc(c.cid)}</span><span class="claim-body">${esc(c.text)}</span></div>
     <div class="claim-meta">
-      <span class="claim-verdict" id="verdict-${esc(c.cid)}">⋯ pending verification</span>
+      <span class="claim-verdict pending" id="verdict-${esc(c.cid)}">\u22EF pending verification</span>
       <div class="claim-sources">${srcHtml}</div>
     </div>
   `;
   list.appendChild(card);
   state.claims[c.cid] = card;
-  $('#canvas-scroll').scrollTop = $('#canvas-scroll').scrollHeight;
+  const scrollArea = $('#canvas-scroll');
+  if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
 }
 
-// Update claim verdict
-function applyVerdict(cid, status, reason) {
+// Mark claim as currently verifying (thin scan line pass)
+function markVerifying(cid) {
   const card = state.claims[cid];
   if (!card) return;
-  card.classList.add('scanning');
-  setTimeout(() => {
-    card.classList.remove('scanning');
-    card.className = 'claim-card ' + status;
-    const vSpan = card.querySelector('#verdict-' + cid);
+  if (card.classList.contains('verified') || card.classList.contains('unverified') || card.classList.contains('rejected')) {
+    return;
+  }
+  card.classList.add('verifying');
+  const vSpan = card.querySelector('#verdict-' + cid);
+  if (vSpan) {
+    vSpan.className = 'claim-verdict verifying';
+    vSpan.innerHTML = `\u23F3 verifying against sources\u2026`;
+  }
+}
+
+// Update claim verdict in place immediately
+function applyVerdict(cid, status, reason, subqId) {
+  const card = state.claims[cid];
+  if (!card) return;
+
+  card.classList.remove('verifying', 'scanning');
+  card.className = 'claim-card ' + status;
+
+  const vSpan = card.querySelector('#verdict-' + cid);
+  if (vSpan) {
     if (status === 'verified') {
       vSpan.className = 'claim-verdict verified';
-      vSpan.innerHTML = `✓ Verified`;
+      vSpan.innerHTML = `\u2713 Verified`;
       state.counts.verified++;
     } else if (status === 'unverified') {
       vSpan.className = 'claim-verdict unverified';
-      vSpan.innerHTML = `? Unverified · ${esc(reason)}`;
+      vSpan.innerHTML = `? Unverified \u2014 ${esc(reason || 'insufficient corroborating evidence')}`;
       state.counts.unverified++;
     } else if (status === 'rejected') {
       vSpan.className = 'claim-verdict rejected';
-      vSpan.innerHTML = `✕ Rejected · ${esc(reason)}`;
+      vSpan.innerHTML = `\u2715 Rejected \u2014 ${esc(reason || 'contradicted by source evidence')}`;
       state.counts.rejected++;
     }
-    $('#verified-counter').textContent = `${state.counts.verified} Verified · ${state.counts.rejected} Rejected`;
-  }, 220);
+  }
+
+  updateVerdictCounters();
+
+  const targetSubq = subqId || card.getAttribute('data-subq');
+  if (targetSubq && state.laneCounts && state.laneCounts[targetSubq]) {
+    const lc = state.laneCounts[targetSubq];
+    if (status in lc) lc[status]++;
+    updateLaneCountsBar(targetSubq);
+  }
 }
 
 // Start research run
 function startRun(query, isSample) {
   if (state.eventSource) state.eventSource.close();
+  _subqList = [];
+  _claimToSubq = {};
+  _laneClaims = {};
+  _laneVerdicts = {};
+  _laneStatuses = {};
+  _loopingLanes.clear();
+  _noEvidenceLanes.clear();
+  _researchEvidenceReceived.clear();
+  _draftReceived.clear();
+  _weakLanes.clear();
   state.running = true;
   state.t0 = Date.now();
   state.activeLanes = {};
   state.claims = {};
+  state.laneCounts = {};
+  state.thinSubqs = new Set();
   state.counts = { verified: 0, unverified: 0, rejected: 0 };
   state.stepCount = 0;
 
+  // Reset log store
+  logEntries.length = 0;
+  // Reset stage-counter tracker
+  Object.assign(_stageCounters, {
+    planning:    { subquestions: 0 },
+    researching: { searches: 0, passages: 0 },
+    drafting:    { claims: 0, filtered: 0 },
+    verifying:   { verified: 0, unverified: 0, rejected: 0 },
+    synthesizing:{}
+  });
+  // Reset panel state
+  _lpFilter = 'all';
+  _lpUserScrolledUp = false;
+  $$('.lp-chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.filter === 'all' ? 'true' : 'false'));
+  const lpLines = $('#lp-lines');
+  if (lpLines) lpLines.innerHTML = '';
+
   qInput.disabled = true;
   sendBtn.disabled = true;
+
+  const modePill = $('#run-mode-pill');
+  if (modePill) {
+    modePill.style.display = 'inline-flex';
+    modePill.className = 'run-mode-pill ' + (isSample ? 'replay' : 'live');
+    modePill.textContent = isSample ? 'Recorded Replay' : 'Live Run';
+  }
+
+  state.isSample = Boolean(isSample);
+  state.runId = null;
+  if (typeof resetDecisionTrail === 'function') resetDecisionTrail();
 
   $('#pipeline-card').style.display = 'block';
   $('#report-section').style.display = 'none';
   const fb = $('#findings-board-section');
   if (fb) { fb.style.display = 'none'; fb.classList.remove('is-visible'); }
+  if (typeof setBoardLanesExpanded === 'function') setBoardLanesExpanded(true);
   if (typeof closeCornerTag === 'function') closeCornerTag();
   $('#subq-lanes').innerHTML = '';
-  $('#log-box').innerHTML = '';
   $('#loop-notice').style.display = 'none';
   $('#banner').style.display = isSample ? 'block' : 'none';
-  $('#verified-counter').textContent = '0 Verified';
+  updateVerdictCounters();
+
+  // Build stage groups
+  _buildStageGroups();
 
   setStage(0);
   addLog('system', `Research initiated: "${esc(query)}"`);
+  // Planning group becomes active immediately
+  sgActivate('planning');
 
   // Build FormData for multipart POST /api/runs
   const fd = new FormData();
   fd.append('question', query);
   fd.append('sample', isSample ? '1' : '0');
-  fd.append('provider', state.provider || 'openrouter');
+  fd.append('provider', state.provider || 'mesh');
+  fd.append('depth', state.depth || 'std');
   for (const f of state.uploadedFiles) {
     fd.append('files', f);
   }
@@ -2094,6 +3973,16 @@ function listenToEvents(runId) {
       qInput.disabled = false;
       sendBtn.disabled = false;
       addLog('system', 'Connection closed');
+      STAGE_DEFS.forEach(d => {
+        if (_sgState[d.id] === 'active') {
+          sgError(d.id, 'Connection closed');
+        } else if (_sgState[d.id] !== 'done') {
+          const entry = _orbs[d.id];
+          if (entry && entry.orb) { entry.orb.destroy(); entry.orb = null; }
+          if (entry && entry.svgEl) entry.svgEl.style.display = 'none';
+          if (entry && entry.dotEl) entry.dotEl.style.display = 'none';
+        }
+      });
     }
   };
 }
@@ -2106,6 +3995,21 @@ function handleEvent(ev) {
     if (state.eventSource) state.eventSource.close();
     setStage(4, true);
     $('#loop-notice').style.display = 'none';
+    sgSetSummary('synthesizing', 'report ready');
+    STAGE_DEFS.forEach(d => {
+      if (_sgState[d.id] !== 'done') sgDone(d.id);
+    });
+    _subqList.forEach(id => {
+      hideLaneActiveQuery(id);
+      _loopingLanes.delete(id);
+      if (_laneStatuses[id] === 'Searching again' || _laneStatuses[id] === 'Searching' || _laneStatuses[id] === 'Drafting' || _laneStatuses[id] === 'Verifying') {
+        if (_noEvidenceLanes.has(id)) {
+          setLaneStatus(id, 'No evidence');
+        } else {
+          setLaneStatus(id, 'Done');
+        }
+      }
+    });
     addLog('synthesizer', '<b>Final report generated successfully</b>', 'ok');
     qInput.disabled = false;
     sendBtn.disabled = false;
@@ -2114,6 +4018,19 @@ function handleEvent(ev) {
   }
   if (step === 'synthesize' && kind === 'report') {
     setStage(4);
+    _subqList.forEach(id => {
+      hideLaneActiveQuery(id);
+      _loopingLanes.delete(id);
+      if (_laneStatuses[id] === 'Searching again' || _laneStatuses[id] === 'Searching' || _laneStatuses[id] === 'Drafting' || _laneStatuses[id] === 'Verifying') {
+        if (_noEvidenceLanes.has(id)) {
+          setLaneStatus(id, 'No evidence');
+        } else {
+          setLaneStatus(id, 'Done');
+        }
+      }
+    });
+    sgSetSummary('synthesizing', 'report ready');
+    sgDone('synthesizing');
     addLog('synthesizer', 'Compiling cited sections and references');
     return;
   }
@@ -2124,9 +4041,19 @@ function handleEvent(ev) {
     qInput.disabled = false;
     sendBtn.disabled = false;
     const msg = ev.message || (p && p.message) || 'An error occurred';
+    STAGE_DEFS.forEach(d => {
+      if (_sgState[d.id] === 'active') {
+        sgError(d.id, msg);
+      } else if (_sgState[d.id] !== 'done') {
+        const entry = _orbs[d.id];
+        if (entry && entry.orb) { entry.orb.destroy(); entry.orb = null; }
+        if (entry && entry.svgEl) entry.svgEl.style.display = 'none';
+        if (entry && entry.dotEl) entry.dotEl.style.display = 'none';
+      }
+    });
     addLog('error', esc(msg), 'bad');
     if (msg.includes('daily request limit') || msg.includes('Rate limit') || msg.includes('rate-limited')) {
-      addLog('system', '💡 <em>Free model daily quota reached.</em> <button type="button" class="btn btn-soft btn-pill" style="padding:2px 8px; font-size:11px; margin-left:6px;" onclick="startSampleRun()">Run Recorded Sample Demo</button>');
+      addLog('system', '\uD83D\uDCA1 <em>Free model daily quota reached.</em> <button type="button" class="btn btn-soft btn-pill" style="padding:2px 8px; font-size:11px; margin-left:6px;" onclick="startSampleRun()">Run Recorded Sample Demo</button>');
     }
     return;
   }
@@ -2136,99 +4063,250 @@ function handleEvent(ev) {
   }
 
   if (step === 'plan' && kind === 'subquestions') {
+    _subqList = (p.sub_questions || []).map(sq => sq.id);
     (p.sub_questions || []).forEach(sq => {
-      getOrCreateLane(sq.id, sq.question);
+      getOrCreateLane(sq.id, sq.question, sq.tag);
+      setLaneTitle(sq.id, sq.question);
+      _laneClaims[sq.id] = new Set();
+      _laneVerdicts[sq.id] = new Set();
+      _laneStatuses[sq.id] = '';
     });
-    addLog('planner', `Decomposed into ${p.sub_questions.length} parallel sub-questions`);
+    _stageCounters.planning.subquestions = _subqList.length;
+    _refreshSummary('planning');
+    const depthLbl = p.depth ? ` (${esc(p.depth)} mode)` : '';
+    addLog('planner', `Decomposed into ${p.sub_questions.length} parallel sub-questions${depthLbl}`);
+    sgDone('planning');
   }
   else if (step === 'research' && kind === 'search') {
-    const lane = getOrCreateLane(p.subq);
-    const qline = lane.querySelector('#qline-' + p.subq);
-    const qtext = lane.querySelector('#qtext-' + p.subq);
-    const pbadge = lane.querySelector('#pbadge-' + p.subq);
-    qline.style.display = 'flex';
-    qtext.textContent = p.query;
-    pbadge.textContent = p.provider || 'web';
-    pbadge.className = 'provider-badge ' + (p.provider || 'web');
-    addLog('researcher', `[${esc(p.subq)}] searched: "${esc(p.query)}" (${esc(p.provider || 'web')}) → ${p.results} results`);
+    sgActivate('researching');
+    _stageCounters.researching.searches++;
+    _refreshSummary('researching');
+    getOrCreateLane(p.subq);
+    showLaneActiveQuery(p.subq, p.query);
+    if (_loopingLanes.has(p.subq)) {
+      setLaneStatus(p.subq, 'Searching again');
+    } else {
+      setLaneStatus(p.subq, 'Searching');
+    }
+    addLog('researcher', `[${esc(p.subq)}] searched: "${esc(p.query)}" (${esc(p.provider || 'web')}) \u2192 ${p.results} results`);
   }
   else if (step === 'research' && kind === 'evidence') {
-    const statusSpan = $('#status-' + p.subq);
-    if (statusSpan) statusSpan.textContent = `${p.passages} passages stored`;
+    if (p.subq) {
+      _researchEvidenceReceived.add(p.subq);
+      if (state.laneCounts && state.laneCounts[p.subq]) {
+        state.laneCounts[p.subq].passages = p.passages || 0;
+      }
+      hideLaneActiveQuery(p.subq);
+      _loopingLanes.delete(p.subq);
+      setLaneStatus(p.subq, 'Drafting');
+    }
+    _stageCounters.researching.passages += (p.passages || 0);
+    _refreshSummary('researching');
     addLog('researcher', `[${esc(p.subq)}] ${p.passages} evidence passages stored`);
+    if (_weakLanes.size > 0) {
+      if (Array.from(_weakLanes).every(id => _researchEvidenceReceived.has(id))) {
+        _weakLanes.clear();
+        sgDone('researching');
+      }
+    } else if (_subqList.length > 0 && _subqList.every(id => _researchEvidenceReceived.has(id))) {
+      sgDone('researching');
+    }
   }
   else if (step === 'draft' && kind === 'claims') {
-    (p.items || []).forEach(item => renderClaim(item, p.subq));
+    sgActivate('drafting');
+    if (p.subq) {
+      _draftReceived.add(p.subq);
+      _researchEvidenceReceived.add(p.subq);
+      hideLaneActiveQuery(p.subq);
+      if (!_laneClaims[p.subq]) _laneClaims[p.subq] = new Set();
+      (p.items || []).forEach(item => {
+        _claimToSubq[item.cid] = p.subq;
+        _laneClaims[p.subq].add(item.cid);
+        renderClaim(item, p.subq);
+      });
+      if ((p.items || []).length > 0) {
+        if (!_laneStatuses[p.subq] || _laneStatuses[p.subq] === 'Searching' || _laneStatuses[p.subq] === 'Searching again') {
+          setLaneStatus(p.subq, 'Drafting');
+        }
+      }
+      if (state.laneCounts && state.laneCounts[p.subq]) {
+        state.laneCounts[p.subq].drafted = p.drafted !== undefined ? p.drafted : (p.claims || (p.items || []).length);
+      }
+    }
+    _stageCounters.drafting.claims += (p.items || []).length;
+    _refreshSummary('drafting');
     addLog('drafter', `[${esc(p.subq)}] drafted ${(p.items || []).length} atomic claims`);
+    if (_weakLanes.size > 0) {
+      if (Array.from(_weakLanes).every(id => _researchEvidenceReceived.has(id))) sgDone('researching');
+      if (Array.from(_weakLanes).every(id => _draftReceived.has(id))) sgDone('drafting');
+    } else {
+      if (_subqList.length > 0 && _subqList.every(id => _researchEvidenceReceived.has(id))) sgDone('researching');
+      if (_subqList.length > 0 && _subqList.every(id => _draftReceived.has(id))) sgDone('drafting');
+    }
   }
   else if (step === 'draft' && kind === 'no_evidence') {
+    sgActivate('drafting');
+    if (p.subq) {
+      _draftReceived.add(p.subq);
+      _researchEvidenceReceived.add(p.subq);
+      hideLaneActiveQuery(p.subq);
+      _noEvidenceLanes.add(p.subq);
+      _loopingLanes.delete(p.subq);
+      setLaneStatus(p.subq, 'No evidence');
+    }
     addLog('drafter', `[${esc(p.subq)}] No evidence found to draft claims`, 'warn');
+    if (_weakLanes.size > 0) {
+      if (Array.from(_weakLanes).every(id => _draftReceived.has(id))) sgDone('drafting');
+    } else if (_subqList.length > 0 && _subqList.every(id => _draftReceived.has(id))) {
+      sgDone('drafting');
+    }
   }
-  else if (step === 'relevance' && kind === 'filtered') {
+  else if (step === 'relevance' && (kind === 'filtered' || kind === 'summary')) {
     const dropped = p.dropped || 0;
+    if (p.subq && state.laneCounts && state.laneCounts[p.subq]) {
+      state.laneCounts[p.subq].off_topic_dropped = dropped;
+    }
     if (dropped > 0) {
+      _stageCounters.drafting.filtered += dropped;
+      _refreshSummary('drafting');
       addLog('relevance', `relevance: filtered ${dropped} off-topic claim${dropped === 1 ? '' : 's'} (${esc(p.subq || '')})`);
     }
   }
   else if (step === 'lane' && kind === 'status') {
     const subq = p.subq;
     const lane = getOrCreateLane(subq);
-    const statusSpan = $('#status-' + subq);
-    const countsBar = $('#counts-' + subq);
     const reasonBox = $('#reason-' + subq);
-
-    if (statusSpan) {
-      if (p.state === 'error') statusSpan.textContent = 'Error';
-      else if (p.state === 'empty') statusSpan.textContent = 'Empty';
-      else if (p.state === 'thin') statusSpan.textContent = 'Thin';
-      else if (p.state === 'done') statusSpan.textContent = 'Done';
-      else if (p.counts && p.counts.passages) statusSpan.textContent = `${p.counts.passages} passages`;
+    if (p.counts && state.laneCounts && state.laneCounts[subq]) {
+      Object.assign(state.laneCounts[subq], p.counts);
     }
-
-    if (countsBar && p.counts) {
-      const c = p.counts;
-      countsBar.style.display = 'flex';
-      countsBar.textContent = `passages: ${c.passages || 0} · drafted: ${c.drafted || 0} · off-topic: ${c.off_topic_dropped || 0} · verified: ${c.verified || 0} · unverified: ${c.unverified || 0} · rejected: ${c.rejected || 0}`;
+    if (p.state === 'error') {
+      setLaneStatus(subq, 'Error');
+    } else if (p.state === 'empty' && (!_laneClaims[subq] || _laneClaims[subq].size === 0)) {
+      setLaneStatus(subq, 'No evidence');
+    } else if (p.state === 'done' && _laneStatuses[subq] !== 'No evidence') {
+      setLaneStatus(subq, 'Done');
     }
-
     if (reasonBox) {
       if ((p.state === 'empty' || p.state === 'thin' || p.state === 'error') && p.reason) {
         reasonBox.style.display = 'flex';
         reasonBox.className = 'lane-reason-box ' + p.state;
-        const icon = p.state === 'error' ? '❌' : (p.state === 'empty' ? 'ℹ️' : '⚠️');
+        const icon = p.state === 'error' ? '\u274C' : (p.state === 'empty' ? '\u2139\uFE0F' : '\u26A0\uFE0F');
         reasonBox.innerHTML = `<span class="reason-icon">${icon}</span><span class="reason-text">${esc(p.reason)}</span>`;
       } else {
         reasonBox.style.display = 'none';
       }
     }
   }
+  else if (step === 'verify' && kind === 'checking') {
+    sgDone('drafting');
+    sgActivate('verifying');
+    markVerifying(p.cid);
+  }
   else if (step === 'verify' && kind === 'verdict') {
-    applyVerdict(p.cid, p.status, p.reason);
+    sgDone('drafting');
+    sgActivate('verifying');
+    const cid = p.cid;
+    const subq = p.subq || _claimToSubq[cid];
+    applyVerdict(cid, p.status, p.reason, subq);
+    if (subq) {
+      if (!_laneVerdicts[subq]) _laneVerdicts[subq] = new Set();
+      _laneVerdicts[subq].add(cid);
+
+      const totalClaims = _laneClaims[subq] ? _laneClaims[subq].size : 0;
+      const verdictsCount = _laneVerdicts[subq].size;
+
+      if (totalClaims > 0 && verdictsCount >= totalClaims) {
+        setLaneStatus(subq, 'Done');
+      } else {
+        setLaneStatus(subq, 'Verifying');
+      }
+    }
+    if (p.status === 'verified')   _stageCounters.verifying.verified++;
+    if (p.status === 'unverified') _stageCounters.verifying.unverified++;
+    if (p.status === 'rejected')   _stageCounters.verifying.rejected++;
+    _refreshSummary('verifying');
     const cls = p.status === 'verified' ? 'ok' : p.status === 'rejected' ? 'bad' : 'warn';
-    addLog('verifier', `[${esc(p.cid)}] ${esc(p.status)}${p.reason ? ' — ' + esc(p.reason) : ''}`, cls);
+    addLog('verifier', `[${esc(p.cid)}] ${esc(p.status)}${p.reason ? ' \u2014 ' + esc(p.reason) : ''}`, cls);
+  }
+  else if (step === 'verify' && kind === 'summary') {
+    sgDone('verifying');
+    const v = p.verified || 0, uv = p.unverified || 0, rej = p.rejected || 0;
+    addLog('verifier', `Verification complete: ${v} verified \u00B7 ${uv} unverified \u00B7 ${rej} rejected`, 'ok');
   }
   else if (step === 'coverage' && kind === 'loop_back') {
+    sgDone('drafting');
+    sgDone('verifying');
+    const weak = p.weak || [];
+    _weakLanes = new Set(weak);
+    weak.forEach(id => {
+      _loopingLanes.add(id);
+      setLaneStatus(id, 'Searching again');
+      _researchEvidenceReceived.delete(id);
+      _draftReceived.delete(id);
+    });
+    sgLoop('researching', p.loop);
     setStage(1);
-    const weakList = (p.weak || []).join(', ');
+    const weakList = weak.join(', ');
     $('#loop-notice').style.display = 'flex';
-    $('#loop-text').textContent = `Thin evidence for [${weakList}] → searching again (round ${p.loop})`;
-    addLog('coverage', `Thin evidence for ${weakList} → looping back to research (round ${p.loop})`, 'warn');
+    $('#loop-text').textContent = `Thin evidence for [${weakList}] \u2192 searching again (round ${p.loop})`;
+    addLog('coverage', `Thin evidence for ${weakList} \u2192 looping back to research (round ${p.loop})`, 'warn');
   }
   else if (step === 'coverage' && kind === 'done') {
+    state.thinSubqs = new Set(p.thin || []);
+    sgDone('researching');
+    sgDone('drafting');
+    sgDone('verifying');
     $('#loop-notice').style.display = 'none';
-    addLog('coverage', 'Coverage check complete');
+    _subqList.forEach(id => {
+      hideLaneActiveQuery(id);
+      _loopingLanes.delete(id);
+      if (_laneStatuses[id] === 'Searching again' || _laneStatuses[id] === 'Searching' || _laneStatuses[id] === 'Drafting' || _laneStatuses[id] === 'Verifying') {
+        if (_noEvidenceLanes.has(id)) {
+          setLaneStatus(id, 'No evidence');
+        } else {
+          setLaneStatus(id, 'Done');
+        }
+      }
+    });
+    addLog('coverage', 'Coverage check complete' + (p.thin && p.thin.length ? `; still thin: ${p.thin.join(', ')}` : ''));
+    sgActivate('synthesizing');
+    sgSetSummary('synthesizing', 'writing cited report');
   }
   else if (step === 'contradict' && kind === 'found') {
+    sgDone('verifying');
+    sgActivate('synthesizing');
+    sgSetSummary('synthesizing', 'writing cited report');
     const count = (p.contradictions || []).length;
     addLog('contradict', `Contradiction check: ${count} conflict${count === 1 ? '' : 's'} identified`);
   }
   else if (step === 'llm' && kind === 'call') {
-    const tok = p.tokens ? `${p.tokens} tok` : '';
+    const tok = p.tokens ? `${p.tokens >= 1000 ? (p.tokens / 1000).toFixed(1) + 'k' : p.tokens} tok` : '';
     const prov = p.provider || 'mesh';
-    addLog(prov, `${esc(p.tag || 'call')} / ${esc(p.model || 'llm')} / ${esc(tok)} (${p.ms}ms)`);
+    // Route mesh/llm log line into calling agent's stage group by prefix
+    const callerTag = (p.tag || '').toLowerCase();
+    const callerStage = stageFromTag(callerTag);
+    const sec = ((Date.now() - state.t0) / 1000).toFixed(1).padStart(5,'0');
+    const msg = `${esc(p.tag || 'call')} / ${esc(p.model || 'llm')} / ${esc(tok)} (${p.ms}ms)`;
+    const rawTxt = `${p.tag || 'call'} / ${p.model || 'llm'} / ${tok} (${p.ms}ms)`;
+    state.stepCount++;
+    const countEl = $('#log-count');
+    if (countEl) countEl.textContent = state.stepCount;
+    const entry = { t: sec, tag: prov, text: msg, rawText: rawTxt, stage: callerStage || 'other', cls: '' };
+    logEntries.push(entry);
+    const rowHtml = `<div class="log-row"><span class="log-ts">[${sec}s]</span><span class="log-tag ${prov}">${esc(prov)}</span> ${msg}</div>`;
+    if (callerStage) {
+      const sgLines = $('#sglines-' + callerStage);
+      if (sgLines) {
+        sgLines.insertAdjacentHTML('beforeend', rowHtml);
+        if ($('#sgbtn-' + callerStage) && $('#sgbtn-' + callerStage).getAttribute('aria-expanded') === 'true') {
+          sgLines.scrollTop = sgLines.scrollHeight;
+        }
+      }
+      sgBumpCount(callerStage);
+    }
+    lpAppendRow(entry, rowHtml);
   }
 }
-
 // Corner tag toggle helpers
 function toggleCornerTag(e) {
   if (e) e.stopPropagation();
@@ -2254,7 +4332,11 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeCornerTag();
+  if (e.key === 'Escape') {
+    const panel = $('#log-panel');
+    if (panel && panel.classList.contains('open')) { closeLogPanel(); return; }
+    closeCornerTag();
+  }
 });
 
 function renderHeadlineWithHighlight(text, highlight) {
@@ -2323,7 +4405,7 @@ function buildFindingsBoardClient(r) {
     let label = (q.label || '').trim();
     const lWords = label.split(/\s+/).filter(Boolean);
     const validLabel = lWords.length >= 5 && lWords.length <= 6 && !label.endsWith('?');
-    const displayTitle = validLabel ? `${qid} · ${label}` : `${qid} · ${q.question || label}`;
+    const displayTitle = validLabel ? `${qid} \u00B7 ${label}` : `${qid} \u00B7 ${q.question || label}`;
 
     const laneStatuses = r.lane_statuses || {};
     const lStat = laneStatuses[qid] || {};
@@ -2332,6 +4414,7 @@ function buildFindingsBoardClient(r) {
 
     return {
       subq_id: qid,
+      tag: q.tag || '',
       title: displayTitle,
       label: q.label || '',
       full_question: q.question,
@@ -2349,7 +4432,7 @@ function buildFindingsBoardClient(r) {
   const gPct = Math.round((m.groundedness || 0) * 100);
 
   return {
-    mono_label: 'KEY FINDINGS · PINNED FROM VERIFIED CLAIMS',
+    mono_label: 'EVIDENCE BEHIND THE ANSWER',
     headline: { text: headlineText, highlight },
     lanes,
     corner_tag: {
@@ -2360,13 +4443,40 @@ function buildFindingsBoardClient(r) {
       unverified
     },
     footer: {
-      grounded_pct: gPct,
-      prose_summary: summary
+      grounded_pct: gPct
     }
   };
 }
 
+function toggleLaneCards(btn, totalCount) {
+  const laneEl = btn.closest('.board-lane');
+  if (!laneEl) return;
+  const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+  const nextExpanded = !isExpanded;
+  btn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+  btn.textContent = nextExpanded ? 'Show fewer' : `Show all ${totalCount}`;
+  const overflowCards = laneEl.querySelectorAll('.note-card-overflow');
+  overflowCards.forEach(card => {
+    card.style.display = nextExpanded ? 'block' : 'none';
+  });
+}
+
+function setBoardLanesExpanded(expanded) {
+  const btn = $('#board-toggle-btn');
+  const wrap = $('#board-lanes-wrap');
+  if (btn) btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  if (wrap) wrap.classList.toggle('is-collapsed', !expanded);
+}
+
+function toggleBoardLanes() {
+  const btn = $('#board-toggle-btn');
+  if (!btn) return;
+  const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+  setBoardLanesExpanded(!isExpanded);
+}
+
 function renderFindingsBoard(r) {
+  setBoardLanesExpanded(true);
   const b = r.board || buildFindingsBoardClient(r);
   if (!b) return;
 
@@ -2408,51 +4518,81 @@ function renderFindingsBoard(r) {
   });
   qList.innerHTML = items.length ? items.join('') : '<div style="color:var(--muted);font-size:12px;">No unverified or rejected claims.</div>';
 
+  // Real total count of verified claims on header
+  const totalVerifiedCount = (r.accepted || []).length;
+  const verifiedCountEl = $('#board-verified-count');
+  if (verifiedCountEl) verifiedCountEl.textContent = `${totalVerifiedCount} verified`;
+
+  // Thin subquestions check from coverage/done and report sections
+  const thinSubqs = state.thinSubqs || new Set();
+  (r.sections || []).forEach(s => { if (s.thin && s.id) thinSubqs.add(s.id); });
+
   // 3. Sub-question Lanes & Notes
   const lanesEl = $('#board-lanes');
   lanesEl.innerHTML = (b.lanes || []).map(lane => {
-    const thinBadge = lane.is_thin ? `<span class="lane-thin-tag">not enough proof found</span>` : '';
-    const notesHtml = (lane.notes || []).map(n => `
-      <article class="note-card" tabindex="0" aria-label="Verified claim ${esc(n.cid)}">
-        <div class="note-pin" aria-hidden="true"></div>
-        <div class="note-meta">
-          <span class="note-cid">${esc(n.cid)}</span>
-          <span class="note-status-verified">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            Verified
-          </span>
-        </div>
-        <p class="note-claim-text">${esc(n.text)}</p>
-        <div class="note-domains">
-          ${(n.domains || []).map(d => `<span class="domain-chip">${esc(d)}</span>`).join('')}
-        </div>
-      </article>
-    `).join('');
-
-    const emptyNotice = `
-      <div class="lane-empty-notice" role="status">
-        <span class="empty-title">⚠️ not enough proof found</span>
-        <p class="empty-reason">${esc(lane.reason || 'No verified claims found for this sub-question')}</p>
+    const isThin = thinSubqs.has(lane.subq_id) || Boolean(lane.is_thin);
+    const thinNoticeHtml = isThin ? `
+      <div class="lane-thin-notice" role="status">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Limited evidence for this question.</span>
       </div>
-    `;
+    ` : '';
+
+    const notes = lane.notes || [];
+    const N = notes.length;
+
+    const notesHtml = notes.map((n, idx) => {
+      const isOverflow = idx >= 3;
+
+      return `
+        <article class="note-card${isOverflow ? ' note-card-overflow' : ''}" style="${isOverflow ? 'display:none;' : ''}" tabindex="0" aria-label="Verified claim">
+          <div class="note-pin" aria-hidden="true"></div>
+          <div class="note-meta">
+            <span class="note-status-check" title="Verified" aria-label="Verified">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+          </div>
+          <p class="note-claim-text">${esc(n.text)}</p>
+          <div class="note-domains">
+            ${(n.domains || []).map(d => `<span class="domain-chip">${esc(d)}</span>`).join('')}
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    const expanderBtnHtml = N > 3 ? `
+      <button type="button" class="btn-lane-toggle" onclick="toggleLaneCards(this, ${N})" aria-expanded="false">
+        Show all ${N}
+      </button>
+    ` : '';
+
+    const noNotesHtml = (N === 0 && !isThin) ? `
+      <div class="lane-no-claims-notice">No verified claims found for this sub-question.</div>
+    ` : '';
 
     return `
       <section class="board-lane" aria-label="${esc(lane.full_question || lane.title)}">
         <div class="lane-header">
-          <span class="lane-title" title="${esc(lane.full_question || '')}" aria-label="${esc(lane.full_question || '')}" tabindex="0">${esc(lane.title)}</span>
-          ${thinBadge}
+          <div class="lane-title-wrap">
+            <div class="lane-title-heading">
+              <span class="lane-title" title="${esc(lane.full_question || '')}">${esc(lane.title)}</span>
+              ${lane.tag ? `<span class="board-lane-tag">${esc(lane.tag)}</span>` : ''}
+            </div>
+          </div>
         </div>
+        ${thinNoticeHtml}
         <div class="lane-notes">
-          ${notesHtml || emptyNotice}
+          ${notesHtml}
+          ${noNotesHtml}
+          ${expanderBtnHtml}
         </div>
       </section>
     `;
   }).join('');
 
-  // 4. Footer: Grounded-% stamp (Sticker 3), Prose summary toggle, Downloads
+  // 5. Footer: Grounded-% stamp (Sticker 3), Downloads
   const m = r.metrics || {};
   const groundedPct = (b.footer && typeof b.footer.grounded_pct === 'number') ? b.footer.grounded_pct : Math.round((m.groundedness || 0) * 100);
-  const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<a class="citation" href="#src-$1">[$1]</a>');
 
   // Sticker 3: Grounded-% stamp
   $('#board-stamp-wrap').innerHTML = `
@@ -2467,10 +4607,6 @@ function renderFindingsBoard(r) {
     </div>
   `;
 
-  // Prose toggle content
-  const prose = (b.footer && b.footer.prose_summary) || r.summary || '';
-  $('#board-prose-content').innerHTML = prose ? `<p style="margin:0;">${citeReplace(prose)}</p>` : '<em>No prose summary available.</em>';
-
   // Board download links
   const rid = r.run_id || state.runId || 'sample';
   if ($('#board-dl-pdf')) $('#board-dl-pdf').href = `/api/report/${encodeURIComponent(rid)}.pdf`;
@@ -2480,6 +4616,7 @@ function renderFindingsBoard(r) {
 
 // Render Report (Structured Report + Findings Board)
 function renderReport(r) {
+  if (r.run_id) state.runId = r.run_id;
   const repSec = $('#report-section');
   const fbSec = $('#findings-board-section');
   const m = r.metrics || {};
@@ -2488,8 +4625,7 @@ function renderReport(r) {
 
   // Metric pills
   const groundedPct = Math.round((m.groundedness || 0) * 100);
-  const rawProv = m.provider || state.provider || (state.statusData ? state.statusData.provider : 'mesh');
-  const provLabel = rawProv === 'openrouter' ? 'OpenRouter' : 'Mesh API';
+  const provLabel = 'Mesh API';
   const mod = (m.model || (state.statusData ? state.statusData.model : '')).split('/').pop();
   $('#report-metrics').innerHTML = `
     <span class="metric-pill highlight">✓ ${groundedPct}% Grounded</span>
@@ -2500,10 +4636,10 @@ function renderReport(r) {
     <span class="metric-pill" style="font-size:11px; color:var(--muted);">${esc(provLabel)}${mod ? ' / ' + esc(mod) : ''}</span>
   `;
 
-  // Render Findings Board (replaces Executive Summary block)
+  // Render Findings Board and Caught by Verifier
   renderFindingsBoard(r);
 
-  // Body content with citations: Findings Board replaces Executive Summary, sections remain
+  // Body content with citations
   const citeReplace = text => esc(text).replace(/\[(\d+)\]/g, '<a class="citation" href="#src-$1">[$1]</a>');
 
   let bodyHtml = '';
@@ -2534,36 +4670,91 @@ function renderReport(r) {
   $('#dl-html').href = `/api/report/${encodeURIComponent(rid)}.html`;
   $('#dl-md').href = `/api/report/${encodeURIComponent(rid)}.md`;
 
-  // Reveal sections: Findings Board appears between pipeline card and report, then scroll smoothly to it
+  // Reset trail dataset.loaded so a trail opened mid-run reloads with finished run data
+  const trailBody = $('#trail-body');
+  if (trailBody) {
+    delete trailBody.dataset.loaded;
+    if (trailBody.classList.contains('open')) {
+      loadDecisionTrail();
+    } else {
+      trailBody.innerHTML = '';
+    }
+  }
+
+  // Reveal sections: Results View container and Findings Board
+  repSec.style.display = 'block';
   fbSec.style.display = 'block';
   requestAnimationFrame(() => fbSec.classList.add('is-visible'));
-  repSec.style.display = 'block';
-  fbSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  repSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function resetDecisionTrail() {
+  const body = $('#trail-body');
+  if (body) {
+    body.innerHTML = '';
+    body.classList.remove('open');
+    delete body.dataset.loaded;
+  }
+  const icon = $('#trail-icon');
+  if (icon) icon.textContent = '\u25BC';
 }
 
 // Decision Trail Toggle
 function toggleTrail() {
   const body = $('#trail-body');
+  if (!body) return;
   const isOpen = body.classList.toggle('open');
-  $('#trail-icon').textContent = isOpen ? '▲' : '▼';
+  $('#trail-icon').textContent = isOpen ? '\u25B2' : '\u25BC';
   if (isOpen && !body.dataset.loaded) {
     loadDecisionTrail();
   }
 }
 
 function loadDecisionTrail() {
-  const rid = state.runId || 'sample';
-  fetch(`/api/runs/${encodeURIComponent(rid)}/trail`)
-    .then(r => r.json())
+  const body = $('#trail-body');
+  if (!body) return;
+
+  const rid = state.runId;
+  const isSampleRun = Boolean(state.isSample || (rid && String(rid).startsWith('sample')));
+
+  // For live runs never fall back to 'sample'
+  if (!rid && !isSampleRun) {
+    body.innerHTML = '<div>Trail not available for this run.</div>';
+    return;
+  }
+
+  const fetchId = rid || 'sample';
+  body.innerHTML = '<div style="color:var(--muted); font-size:12px; font-style:italic;">Loading decision trail\u2026</div>';
+
+  fetch(`/api/runs/${encodeURIComponent(fetchId)}/trail`)
+    .then(r => {
+      if (!r.ok) throw new Error('Failed to load trail');
+      return r.json();
+    })
     .then(data => {
-      const body = $('#trail-body');
       body.dataset.loaded = 'true';
       let html = '';
+
+      if (data.plan_audit && (data.plan_audit.mapped_clauses || data.plan_audit.dropped_peripheral_angles || data.plan_audit.reasoning)) {
+        const pa = data.plan_audit;
+        const mappedPills = (pa.mapped_clauses || []).map(c => `<span class="counter-pill" style="margin-right:4px;">${esc(c)}</span>`).join('');
+        const droppedPills = (pa.dropped_peripheral_angles || []).map(a => `<span style="text-decoration:line-through; margin-right:6px; color:var(--muted); font-size:11.5px;">${esc(a)}</span>`).join('');
+        html += `
+          <div class="trail-group" style="margin-bottom:14px; border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--surface-2);">
+            <div class="trail-group-title" style="color:var(--ink); font-weight:700; margin-bottom:6px;">
+              \uD83C\uDFAF Plan Scope Calibration & Clauses
+            </div>
+            ${mappedPills ? `<div style="font-size:12px; margin-bottom:6px;"><strong>Target Clauses:</strong> ${mappedPills}</div>` : ''}
+            ${droppedPills ? `<div style="font-size:12px; margin-bottom:6px;"><strong>Excluded Peripheral Angles:</strong> ${droppedPills}</div>` : ''}
+            ${pa.reasoning ? `<div style="font-size:11.5px; color:var(--ink-2); font-style:italic;">"${esc(pa.reasoning)}"</div>` : ''}
+          </div>
+        `;
+      }
 
       if (data.accepted && data.accepted.length) {
         html += `<div class="trail-group"><div class="trail-group-title">Accepted Claims (${data.accepted.length})</div>`;
         data.accepted.forEach(c => {
-          html += `<div>• <b>${esc(c.cid)}</b>: ${esc(c.text)}</div>`;
+          html += `<div>&bull; <b>${esc(c.cid)}</b>: ${esc(c.text)}</div>`;
         });
         html += `</div>`;
       }
@@ -2571,7 +4762,7 @@ function loadDecisionTrail() {
       if (data.rejected && data.rejected.length) {
         html += `<div class="trail-group"><div class="trail-group-title" style="color:var(--bad)">Rejected Claims (${data.rejected.length})</div>`;
         data.rejected.forEach(c => {
-          html += `<div>• <b>${esc(c.cid)}</b>: <del>${esc(c.text)}</del><br><span style="color:var(--bad); margin-left:14px;">Reason: ${esc(c.reason || 'unsupported')}</span></div>`;
+          html += `<div>&bull; <b>${esc(c.cid)}</b>: <del>${esc(c.text)}</del><br><span style="color:var(--bad); margin-left:14px;">Reason: ${esc(c.reason || 'unsupported')}</span></div>`;
         });
         html += `</div>`;
       }
@@ -2579,7 +4770,7 @@ function loadDecisionTrail() {
       if (data.unverified && data.unverified.length) {
         html += `<div class="trail-group"><div class="trail-group-title" style="color:var(--warn)">Unverified Claims (${data.unverified.length})</div>`;
         data.unverified.forEach(c => {
-          html += `<div>• <b>${esc(c.cid)}</b>: ${esc(c.text)}<br><span style="color:var(--warn); margin-left:14px;">Reason: ${esc(c.reason)}</span></div>`;
+          html += `<div>&bull; <b>${esc(c.cid)}</b>: ${esc(c.text)}<br><span style="color:var(--warn); margin-left:14px;">Reason: ${esc(c.reason)}</span></div>`;
         });
         html += `</div>`;
       }
@@ -2587,7 +4778,7 @@ function loadDecisionTrail() {
       if (data.dropped_sentences && data.dropped_sentences.length) {
         html += `<div class="trail-group"><div class="trail-group-title">Dropped Sentences (${data.dropped_sentences.length})</div>`;
         data.dropped_sentences.forEach(s => {
-          html += `<div>• <span style="color:var(--muted)">"${esc(s)}"</span> (missing claim citation)</div>`;
+          html += `<div>&bull; <span style="color:var(--muted)">"${esc(s)}"</span> (missing claim citation)</div>`;
         });
         html += `</div>`;
       }
@@ -2601,7 +4792,7 @@ function loadDecisionTrail() {
           <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">`;
         if (data.filtered && data.filtered.length) {
           data.filtered.forEach(c => {
-            html += `<div>• <b>${esc(c.cid)}</b>: <del style="color:var(--muted)">${esc(c.text)}</del><br><span style="color:var(--muted); font-size:11.5px; margin-left:14px;">Reason: ${esc(c.reason || 'off_topic')}</span></div>`;
+            html += `<div>&bull; <b>${esc(c.cid)}</b>: <del style="color:var(--muted)">${esc(c.text)}</del><br><span style="color:var(--muted); font-size:11.5px; margin-left:14px;">Reason: ${esc(c.reason || 'off_topic')}</span></div>`;
           });
         } else {
           html += `<div style="font-size:12px; color:var(--muted);">${fCount} claim(s) filtered out before verification.</div>`;
@@ -2612,6 +4803,7 @@ function loadDecisionTrail() {
       body.innerHTML = html || '<div>No trail entries recorded.</div>';
     })
     .catch(() => {
+      delete body.dataset.loaded;
       $('#trail-body').innerHTML = '<div>Could not load audit trail.</div>';
     });
 }
@@ -2624,7 +4816,7 @@ function askFollowup() {
 
   const resBox = $('#followup-res');
   resBox.style.display = 'block';
-  resBox.innerHTML = `<em>Consulting verified claims…</em>`;
+  resBox.innerHTML = `<em>Consulting verified claims\u2026</em>`;
 
   const rid = state.runId || 'sample';
   fetch(`/api/runs/${encodeURIComponent(rid)}/followup`, {
@@ -2640,6 +4832,10 @@ function askFollowup() {
     .catch(err => {
       resBox.innerHTML = `<span style="color:var(--bad)">Error: ${esc(err.message)}</span>`;
     });
+}
+
+if (window.location.hash === '#sample') {
+  window.addEventListener('DOMContentLoaded', () => setTimeout(startSampleRun, 200));
 }
 </script>
 </body>

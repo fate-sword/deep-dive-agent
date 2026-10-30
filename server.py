@@ -7,6 +7,9 @@ import queue
 import threading
 import time
 import uuid
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -50,7 +53,7 @@ def sample_events():
     yield sse_format({"kind": "report", "report": SAMPLE.get("report", {}), "sample": True})
 
 
-def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, cancel_event: threading.Event | None = None, provider: str | None = None):
+def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, cancel_event: threading.Event | None = None, provider: str | None = None, depth: str = "std"):
     q: queue.Queue = queue.Queue()
     worker_started = threading.Event()
 
@@ -65,7 +68,8 @@ def live_events(question: str, uploads: list[tuple[str, bytes]] | None = None, c
                     uploads=uploads,
                     settings=settings,
                     on_event=lambda s, k, p: q.put({"step": s, "kind": k, "payload": p}),
-                    provider=provider
+                    provider=provider,
+                    depth=depth
                 )
             if rep and isinstance(rep, dict):
                 if "metrics" in rep:
@@ -108,17 +112,17 @@ def index():
 @app.get("/api/status")
 def status():
     mesh_key = bool(os.getenv("MESH_API_KEY"))
-    or_key = bool(os.getenv("OPENROUTER_API_KEY"))
     active_prov = settings.llm_provider
     active_has_key = bool(settings.api_key)
+    mesh_model = os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
     return {
         "name": "Deeptrace",
         "live": active_has_key,
         "provider": active_prov,
         "mesh": mesh_key,
-        "openrouter": or_key,
         "model": settings.model,
         "verifier_model": settings.verifier_model,
+        "mesh_model": mesh_model,
         "tavily": bool(os.getenv("TAVILY_API_KEY")),
     }
 
@@ -129,12 +133,15 @@ async def create_run(
     question: str = Form(""),
     sample: int = Form(0),
     provider: str = Form(""),
+    depth: str = Form("std"),
     files: list[UploadFile] = File(default=[]),
 ):
     q = question.strip()[:400]
     client_ip = request.client.host if request.client else "unknown"
     req_prov = (provider or "").strip().lower()
-    selected_provider = req_prov if req_prov in ("mesh", "openrouter") else settings.llm_provider
+    selected_provider = req_prov if req_prov == "mesh" else settings.llm_provider
+    req_depth = (depth or "std").strip().lower()
+    selected_depth = req_depth if req_depth in ("quick", "std", "deep") else "std"
 
     # Check upload sizes and extensions
     uploads: list[tuple[str, bytes]] = []
@@ -157,7 +164,10 @@ async def create_run(
     except Exception:
         has_key = False
 
-    is_sample = bool(sample or not has_key or not q)
+    if not sample and not has_key:
+        raise HTTPException(400, "Mesh API key is not configured in .env.")
+
+    is_sample = bool(sample or not q)
     if not is_sample:
         with ip_lock:
             now = time.time()
@@ -172,12 +182,13 @@ async def create_run(
             "question": q,
             "sample": is_sample,
             "provider": selected_provider,
+            "depth": selected_depth,
             "uploads": uploads,
             "created": time.time(),
             "cancel": threading.Event(),
         }
 
-    return {"run_id": run_id, "sample": is_sample, "question": q, "provider": selected_provider}
+    return {"run_id": run_id, "sample": is_sample, "question": q, "provider": selected_provider, "depth": selected_depth}
 
 
 @app.get("/api/runs/{run_id}/events")
@@ -202,7 +213,7 @@ async def stream_run_events(request: Request, run_id: str):
                         break
                     yield chunk
             else:
-                for chunk in live_events(run_data["question"], run_data.get("uploads"), cancel_event, provider=run_data.get("provider")):
+                for chunk in live_events(run_data["question"], run_data.get("uploads"), cancel_event, provider=run_data.get("provider"), depth=run_data.get("depth", "std")):
                     if await request.is_disconnected():
                         if cancel_event:
                             cancel_event.set()
@@ -283,6 +294,7 @@ def decision_trail(run_id: str):
             "filtered_count": len(f_list),
             "dropped_sentences": SAMPLE.get("report", {}).get("dropped_sentences", []),
             "contradictions": SAMPLE.get("report", {}).get("contradictions", []),
+            "plan_audit": SAMPLE.get("report", {}).get("plan_audit", {}),
         }
 
     store = RunStore(settings.db_path)
@@ -302,6 +314,7 @@ def decision_trail(run_id: str):
         "filtered_count": len(filtered),
         "dropped_sentences": report.get("dropped_sentences", []) if report else [],
         "contradictions": report.get("contradictions", []) if report else [],
+        "plan_audit": report.get("plan_audit", {}) if report else {},
     }
 
 

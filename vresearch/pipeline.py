@@ -275,7 +275,7 @@ def build_graph(ctx: Ctx):
             except Exception as e:
                 reason = f"Drafter failed after retry: {str(e)[:100]}"
                 emit_lane_status(q["id"], "error", reason)
-                ctx.log("draft", "error", {"subq": q["id"], "error": reason}, f"Drafter [{q['id']}]: {reason}")
+                ctx.log("draft", "lane_warning", {"subq": q["id"], "error": reason, "message": reason}, f"Drafter [{q['id']}]: {reason}")
                 return
 
             raw_drafted_count = len(drafted)
@@ -319,7 +319,7 @@ def build_graph(ctx: Ctx):
             except agents.RelevanceGateError as rge:
                 reason = f"Relevance gate JSON parse failure after retry: {str(rge)[:100]}"
                 emit_lane_status(q["id"], "error", reason)
-                ctx.log("draft", "error", {"subq": q["id"], "error": reason}, f"Drafter [{q['id']}]: {reason}")
+                ctx.log("draft", "lane_warning", {"subq": q["id"], "error": reason, "message": reason}, f"Drafter [{q['id']}]: {reason}")
                 return
 
             eval_by_cid = {e["cid"]: e for e in evals}
@@ -374,6 +374,20 @@ def build_graph(ctx: Ctx):
                         "drafted_round": raw_drafted_count,
                         "off_topic_dropped": total_dropped_subq
                     })
+                else:
+                    reason = f"All {len(dropped_candidates)} candidate claims were off-topic; searching again"
+                    emit_lane_status(q["id"], "empty", reason, {
+                        "drafted": total_drafted_subq,
+                        "drafted_round": raw_drafted_count,
+                        "off_topic_dropped": total_dropped_subq
+                    })
+                ctx.log("draft", "claims", {
+                    "subq": q["id"],
+                    "claims": 0,
+                    "drafted": total_drafted_subq,
+                    "drafted_round": raw_drafted_count,
+                    "items": []
+                }, f"Drafter [{q['id']}]: 0 direct claims kept ({len(dropped_candidates)} filtered as off-topic)")
                 return
 
             # Assign permanent CIDs and save ONLY direct claims
@@ -422,7 +436,7 @@ def build_graph(ctx: Ctx):
             except Exception as e:
                 err_msg = f"Worker error: {str(e)[:100]}"
                 emit_lane_status(q["id"], "error", err_msg)
-                ctx.log("draft", "error", {"subq": q["id"], "error": str(e)}, f"Drafter [{q['id']}]: {err_msg}")
+                ctx.log("draft", "lane_warning", {"subq": q["id"], "error": str(e), "message": err_msg}, f"Drafter [{q['id']}]: {err_msg}")
 
         # Draft per sub-question in sub-question order to keep claim IDs stable
         workers = max(1, getattr(s, "research_workers", 3))
@@ -542,15 +556,14 @@ def build_graph(ctx: Ctx):
         return {"contradictions": []}
 
     def synth_node(state: State):
-        usable = [c for c in state["claims"] if c["status"] in ("verified", "unverified")]
-        verified_only = [c for c in usable if c["status"] == "verified"]
-        by_id = {c["cid"]: c for c in usable}
+        verified_only = [c for c in state["claims"] if c["status"] == "verified"]
+        by_id = {c["cid"]: c for c in state["claims"]}
         registry = SourceRegistry(state["evidence"])
         thin = set(state.get("thin", []))
         contradictions = state.get("contradictions", [])
         dropped_all, sections = [], []
         try:
-            out = agents.synthesize(ctx.llm, state["question"], state["subqs"], usable, contradictions, thin)
+            out = agents.synthesize(ctx.llm, state["question"], state["subqs"], verified_only, contradictions, thin)
         except Exception as e:  # deterministic fallback: never fail the run on a bad synth call
             ctx.log("synthesize", "fallback", {"error": str(e)})
             out = {"summary": "", "sections": []}
@@ -569,12 +582,9 @@ def build_graph(ctx: Ctx):
                     top_c = q_ver[0]
                     clean_text = top_c["text"].rstrip(".!? ")
                     summary_sents.append(f"{clean_text} [{top_c['cid']}].")
-            if not summary_sents and usable:
-                for c in usable[:4]:
-                    clean_text = c["text"].rstrip(".!? ")
-                    summary_sents.append(f"{clean_text} [{c['cid']}].")
             if summary_sents:
-                summary, _ = ground_text(" ".join(summary_sents[:5]), by_id, registry)
+                summary, d_s = ground_text(" ".join(summary_sents[:5]), by_id, registry)
+                dropped_all += d_s
 
         # 2. Section Content Grounding & Fallback
         texts = {s_["id"]: s_.get("text", "") for s_ in out.get("sections", []) if isinstance(s_, dict)}
@@ -586,11 +596,10 @@ def build_graph(ctx: Ctx):
             # If section text was empty or lacked substantive words, populate from verified claims
             if not txt or not re.search(r"[a-zA-Z]{3,}", txt):
                 q_claims = [c for c in verified_only if c["subq_id"] == q["id"]]
-                if not q_claims:
-                    q_claims = [c for c in usable if c["subq_id"] == q["id"]]
                 if q_claims:
                     claim_sents = [f"{c['text'].rstrip('.!? ')} [{c['cid']}]." for c in q_claims[:4]]
-                    txt, _ = ground_text(" ".join(claim_sents), by_id, registry)
+                    txt, d_sec = ground_text(" ".join(claim_sents), by_id, registry)
+                    dropped_all += d_sec
 
             sections.append({"id": q["id"], "question": q["question"], "text": txt, "thin": q["id"] in thin})
         contra = []
@@ -678,7 +687,7 @@ def answer_followup(run_id: str, question: str, *, settings: Settings | None = N
     settings = settings or get_settings()
     store = RunStore(settings.db_path)
     llm = llm or LLM(settings, provider=provider)
-    claims = [c for c in store.load_claims(run_id) if c["status"] in ("verified", "unverified")]
+    claims = [c for c in store.load_claims(run_id) if c["status"] == "verified"]
     if not claims:
         return {"answer": "The earlier run produced no usable claims to answer from.", "dropped": []}
     top_ids = {c["cid"] for c in claims}

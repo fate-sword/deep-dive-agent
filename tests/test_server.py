@@ -51,7 +51,7 @@ def test_create_run_with_provider():
     assert r.status_code == 200
     run_info = r.json()
     assert "provider" in run_info
-    assert run_info["provider"] in ("mesh", "openrouter")
+    assert run_info["provider"] == "mesh"
 
 
 def test_file_upload_handling():

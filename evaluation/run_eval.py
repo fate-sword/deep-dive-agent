@@ -36,7 +36,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--judge-model", default=None)
     ap.add_argument("--allow-dev-provider", action="store_true", default=False,
-                    help="Allow evaluation using dev provider (e.g. OpenRouter)")
+                    help="Allow evaluation using dev provider")
     args = ap.parse_args()
     settings = get_settings()
 

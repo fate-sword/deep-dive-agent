@@ -36,45 +36,30 @@ def test_map_tag_to_role():
     assert map_tag_to_role("unknown_tag") == "planner"
 
 
-def test_provider_registry_only_two_providers():
-    # Only mesh and openrouter
+def test_provider_registry_mesh_only():
     p_mesh = get_provider("mesh")
     assert p_mesh.name == "mesh"
     assert p_mesh.dev_only is False
 
-    with pytest.raises(ValueError, match="Deeptrace registry strictly supports 'mesh' and 'openrouter'"):
+    with pytest.raises(ValueError, match="Deeptrace registry strictly supports 'mesh'"):
         get_provider("openai")
 
-    with pytest.raises(ValueError, match="Deeptrace registry strictly supports 'mesh' and 'openrouter'"):
+    with pytest.raises(ValueError, match="Deeptrace registry strictly supports 'mesh'"):
         get_provider("anthropic")
 
 
-def test_openrouter_guardrails(monkeypatch):
-    # Refuse if ALLOW_DEV_PROVIDER is not set
-    monkeypatch.delenv("ALLOW_DEV_PROVIDER", raising=False)
-    with pytest.raises(RuntimeError, match="requires ALLOW_DEV_PROVIDER=1"):
-        get_provider("openrouter")
-
-    # Refuse in production deploy
-    monkeypatch.setenv("ALLOW_DEV_PROVIDER", "1")
-    monkeypatch.setenv("DEPLOY_ENV", "production")
-    with pytest.raises(RuntimeError, match="Deploy environment is production"):
-        get_provider("openrouter")
-
-
 def test_role_based_model_resolution(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("ALLOW_DEV_PROVIDER", "1")
+    monkeypatch.setenv("LLM_PROVIDER", "mesh")
     monkeypatch.delenv("DEPLOY_ENV", raising=False)
-    monkeypatch.setenv("OPENROUTER_MODEL", "default/model:free")
-    monkeypatch.setenv("OPENROUTER_MODEL_VERIFIER", "verifier/special:free")
+    monkeypatch.setenv("MESH_MODEL", "default/model")
+    monkeypatch.setenv("MESH_VERIFIER_MODEL", "verifier/special")
 
     s = get_settings()
-    assert s.get_model_for_role("planner") == "default/model:free"
-    assert s.get_model_for_role("drafter") == "default/model:free"
-    assert s.get_model_for_role("verifier") == "verifier/special:free"
-    assert s.get_model_for_tag("contradictor") == "verifier/special:free"
-    assert s.get_model_for_tag("synthesizer") == "default/model:free"
+    assert s.get_model_for_role("planner") == "default/model"
+    assert s.get_model_for_role("drafter") == "default/model"
+    assert s.get_model_for_role("verifier") == "verifier/special"
+    assert s.get_model_for_tag("contradictor") == "verifier/special"
+    assert s.get_model_for_tag("synthesizer") == "default/model"
 
 
 def test_extra_body_json_validation(monkeypatch):
@@ -86,3 +71,75 @@ def test_extra_body_json_validation(monkeypatch):
     monkeypatch.setenv("LLM_EXTRA_BODY_JSON", 'invalid-json')
     with pytest.raises(ValueError, match="Invalid LLM_EXTRA_BODY_JSON"):
         get_settings()
+
+
+def test_synthesizer_max_tokens_and_reasoning_effort():
+    from unittest.mock import MagicMock
+    import vresearch.agents as agents
+    from vresearch.llm import LLM
+
+    s = Settings("mock-key", "https://api.meshapi.ai/v1", "z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash", 2, 2, 4, 6, ":memory:", llm_provider="mesh")
+    llm = LLM(settings=s, provider="mesh")
+    captured_kwargs = []
+
+    def mock_create(**kwargs):
+        captured_kwargs.append(kwargs)
+        mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
+        mock_choice.message.content = '{"summary": "Test summary [C1].", "sections": []}'
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+        mock_resp.usage.total_tokens = 100
+        mock_resp.model = "z-ai/glm-5.3-flash"
+        return mock_resp
+
+    llm.client.chat.completions.create = mock_create
+
+    res = agents.synthesize(llm, "What is the test?", [{"id": "Q1", "question": "Sub Q?"}], [{"cid": "C1", "subq_id": "Q1", "text": "Claim 1", "status": "verified"}], [], set())
+    assert res == {"summary": "Test summary [C1].", "sections": []}
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0]["max_tokens"] == 4500
+    assert captured_kwargs[0]["extra_body"] == {"reasoning_effort": "low"}
+
+
+def test_empty_output_length_retry():
+    from unittest.mock import MagicMock
+    from vresearch.llm import LLM
+
+    s = Settings("mock-key", "https://api.meshapi.ai/v1", "z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash", 2, 2, 4, 6, ":memory:", llm_provider="mesh")
+    llm = LLM(settings=s, provider="mesh")
+    calls = []
+    llm.on_llm_call = lambda d: calls.append(d)
+    captured_kwargs = []
+
+    call_count = 0
+    def mock_create(**kwargs):
+        nonlocal call_count
+        captured_kwargs.append(kwargs)
+        call_count += 1
+        mock_choice = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.usage.total_tokens = 2500
+        mock_resp.model = "z-ai/glm-5.3-flash"
+        if call_count == 1:
+            mock_choice.finish_reason = "length"
+            mock_choice.message.content = ""
+        else:
+            mock_choice.finish_reason = "stop"
+            mock_choice.message.content = '{"summary": "Recovered summary [C1].", "sections": []}'
+        mock_resp.choices = [mock_choice]
+        return mock_resp
+
+    llm.client.chat.completions.create = mock_create
+
+    out = llm.json("system prompt", "user query", tag="synthesizer", max_tokens=2500)
+    assert out["summary"] == "Recovered summary [C1]."
+    assert len(captured_kwargs) == 2
+    assert captured_kwargs[0]["max_tokens"] == 2500
+    assert captured_kwargs[1]["max_tokens"] > 2500
+    assert len(calls) == 2
+    assert calls[0]["tag"] == "synthesizer"
+    assert "reason" not in calls[0]
+    assert calls[1]["tag"] == "synthesizer:retry"
+    assert calls[1]["reason"] == "empty output"
+

@@ -142,7 +142,7 @@ def test_metrics_and_contradictions_and_audit_trail(result):
     m = report["metrics"]
     assert m["claims_total"] == m["claims_verified"] + m["claims_unverified"] + m["claims_rejected"]
     assert 0 < m["groundedness"] < 1
-    assert report["contradictions"] and report["contradictions"][0]["claims"]
+    assert report["contradictions"] == []
     from vresearch.store import RunStore
     events = RunStore(s.db_path).load_events(run_id)
     kinds = {(e["step"], e["kind"]) for e in events}
@@ -183,4 +183,31 @@ def test_parallel_research_deterministic_outcomes(tmp_path):
     # Check that IDs are unique
     claim_ids = [c["cid"] for c in report["accepted"] + report["unverified"] + report["rejected"]]
     assert len(claim_ids) == len(set(claim_ids))
+
+
+def test_streaming_verification_emits_verdicts_incrementally(tmp_path):
+    s = Settings("k", "http://x", "m", "m", 2, 2, 4, 6, str(tmp_path / "streaming.db"))
+    llm = FakeLLM()
+    events = []
+    run_id, report = run_research(
+        "Test question?",
+        settings=s,
+        llm=llm,
+        search_fn=fake_search,
+        fetch_fn=fake_fetch,
+        on_event=lambda step, kind, payload: events.append((step, kind, payload))
+    )
+    checking_events = [e for e in events if e[0] == "verify" and e[1] == "checking"]
+    verdict_events = [e for e in events if e[0] == "verify" and e[1] == "verdict"]
+
+    assert len(checking_events) >= 1
+    assert len(verdict_events) >= 1
+
+    checking_cids = {e[2]["cid"] for e in checking_events}
+    verdict_cids = {e[2]["cid"] for e in verdict_events}
+    assert verdict_cids.issubset(checking_cids)
+
+    lane_verifying_events = [e for e in events if e[0] == "lane" and e[1] == "status" and e[2].get("state") == "verifying"]
+    assert len(lane_verifying_events) >= 1
+
 

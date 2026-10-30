@@ -1,4 +1,4 @@
-"""Single entry point for every LLM call. Supports Mesh API gateway and dev-only OpenRouter."""
+"""Single entry point for every LLM call via Mesh API gateway."""
 import json
 import os
 import random
@@ -18,6 +18,40 @@ def strip_thinking(text: str) -> str:
     if not text:
         return ""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+
+def check_outer_unclosed(text: str) -> bool:
+    """Check if the text begins an outer JSON structure ('{' or '[') that was never closed."""
+    first_brace = text.find("{")
+    first_bracket = text.find("[")
+    if first_brace == -1 and first_bracket == -1:
+        return False
+    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+        open_c, close_c, start = "{", "}", first_brace
+    else:
+        open_c, close_c, start = "[", "]", first_bracket
+
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == open_c:
+            depth += 1
+        elif ch == close_c:
+            depth -= 1
+            if depth == 0:
+                return False
+    return depth > 0
 
 
 def extract_json(text: str) -> Any:
@@ -54,6 +88,11 @@ def extract_json(text: str) -> Any:
             return json.loads(cleaned.strip())
         except Exception:
             pass
+
+    # If the text has an unclosed outer structure, it was truncated mid-generation.
+    # Do not return partial inner sub-objects from truncated text.
+    if check_outer_unclosed(cleaned):
+        raise ValueError("truncated JSON: unclosed outer structure in model output")
 
     # Search for JSON blocks in text: collect all valid JSON candidate structures
     candidates = []
@@ -156,6 +195,8 @@ class LLM:
         self.s = settings or get_settings()
         prov_name = provider or self.s.llm_provider
         self.provider: Provider = get_provider(prov_name)
+        if self.s and self.s.api_key and not self.provider.api_key:
+            self.provider.api_key = self.s.api_key
         if not self.provider.api_key:
             raise RuntimeError(f"API key for provider '{self.provider.name}' is not set in environment.")
 
@@ -170,7 +211,8 @@ class LLM:
         self._limiter = threading.Semaphore(max(1, self.s.llm_concurrency))
 
     def chat(self, system: str, user: str, *, model: str | None = None,
-             temperature: float = 0.2, max_tokens: int = 2000, tag: str = "") -> str:
+             temperature: float = 0.2, max_tokens: int = 2000, tag: str = "",
+             retry_reason: str = "") -> str:
         if self.provider.name == "mesh":
             target_model = os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
         else:
@@ -178,17 +220,8 @@ class LLM:
         if not target_model:
             raise ValueError(f"No model resolved for tag '{tag}' with provider '{self.provider.name}'")
 
-        # Candidate models failover chain: primary model first, then configured fallbacks
+        # Candidate models failover chain: primary model first
         all_candidates = [target_model]
-        if self.provider.name == "openrouter":
-            if self.s.openrouter_fallback_models:
-                for fb in self.s.openrouter_fallback_models:
-                    if fb not in all_candidates:
-                        all_candidates.append(fb)
-            # Ensure XingChen (Phala pool) is in failover chain as non-OpenRouter-pooled fallback
-            emergency_model = "xingchen-agi/xing4.0-29b-a4b:free"
-            if emergency_model not in all_candidates:
-                all_candidates.append(emergency_model)
 
         # Prioritize candidates that have not exhausted their daily quota
         candidates = [m for m in all_candidates if m not in _DAILY_EXHAUSTED_MODELS]
@@ -197,7 +230,11 @@ class LLM:
             candidates = list(all_candidates)
 
         last: Exception | None = None
-        extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body) if self.provider.name == "openrouter" else {}
+        extra_body_base: dict[str, Any] = dict(self.s.llm_extra_body)
+
+        current_max_tokens = max_tokens
+        current_tag = tag
+        current_retry_reason = retry_reason
 
         for current_model in candidates:
             extra_body: dict[str, Any] = dict(extra_body_base)
@@ -206,9 +243,9 @@ class LLM:
 
             # Per-call thinking policy: disable or minimize reasoning overhead for GLM on Mesh
             if self.provider.name == "mesh" and "glm" in current_model.lower():
-                if any(tag.startswith(prefix) for prefix in ("planner", "researcher_refine", "relevance")):
+                if any(current_tag.startswith(prefix) for prefix in ("planner", "researcher_refine", "relevance")):
                     extra_body["reasoning_effort"] = "none"
-                elif any(tag.startswith(prefix) for prefix in ("drafter", "verifier")):
+                elif any(current_tag.startswith(prefix) for prefix in ("drafter", "verifier", "synthesizer")):
                     extra_body["reasoning_effort"] = "low"
 
             # Up to 4 attempts for transient upstream pool rate limits (e.g. Phala on XingChen)
@@ -222,7 +259,7 @@ class LLM:
                             "model": current_model,
                             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                             "temperature": temperature,
-                            "max_tokens": max_tokens,
+                            "max_tokens": current_max_tokens,
                         }
                         if extra_body:
                             kwargs["extra_body"] = extra_body
@@ -248,33 +285,46 @@ class LLM:
 
                         actual_model = getattr(r, "model", None) or current_model
                         if self.on_llm_call:
-                            self.on_llm_call({
-                                "tag": tag or "llm",
+                            call_meta = {
+                                "tag": current_tag or "llm",
                                 "model": actual_model,
                                 "ms": ms,
                                 "tokens": tokens,
                                 "provider": self.provider.name,
-                            })
+                            }
+                            if current_retry_reason:
+                                call_meta["reason"] = current_retry_reason
+                            self.on_llm_call(call_meta)
 
-                        msg = r.choices[0].message if (r.choices and len(r.choices) > 0) else None
+                        choice = r.choices[0] if (r.choices and len(r.choices) > 0) else None
+                        msg = getattr(choice, "message", None) if choice else None
+                        finish_reason = getattr(choice, "finish_reason", None) if choice else None
+                        self.last_finish_reason = finish_reason
                         raw_content = ""
                         if msg:
                             raw_content = getattr(msg, "content", "") or ""
 
-                        if not raw_content and attempt < max_attempts - 1:
+                        stripped = strip_thinking(raw_content)
+
+                        if not stripped and attempt < max_attempts - 1:
+                            if finish_reason == "length":
+                                # Output is empty because token limit was hit: retry must use higher max_tokens
+                                current_max_tokens = min(8192, max(int(current_max_tokens * 1.5), current_max_tokens + 2000))
+                            else:
+                                current_max_tokens = min(8192, current_max_tokens + 500)
+                            current_tag = f"{tag}:retry" if not (tag and tag.endswith(":retry")) else tag
+                            current_retry_reason = "empty output"
                             time.sleep(1.0)
                             continue
 
-                        return strip_thinking(raw_content)
+                        return stripped
 
                 except Exception as e:
                     last = e
                     err_msg = str(e).lower()
 
-                    # Check for account-level daily limit (e.g. 50 free requests per day reached on OpenRouter)
+                    # Check for account-level daily limit
                     is_daily_limit = any(term in err_msg for term in [
-                        "free-models-per-day",
-                        "openrouter_free_tier_daily",
                         "daily request limit",
                         "daily limit",
                         "per-day limit",
@@ -335,15 +385,22 @@ class LLM:
         sys_json = system + "\n\nRespond with valid JSON only: no prose, no code fences, no reasoning tags."
         raw = self.chat(sys_json, user, model=model, temperature=0.1, max_tokens=max_tokens, tag=tag)
         try:
+            if getattr(self, "last_finish_reason", None) == "length":
+                raise ValueError("model response truncated by token limit (finish_reason='length')")
             return extract_json(raw)
         except ValueError:
             retry_max_tokens = min(8192, max(max_tokens * 2, 4000))
+            retry_tag = tag + ":retry" if not (tag and tag.endswith(":retry")) else tag
+            retry_reason = "length limit reached" if getattr(self, "last_finish_reason", None) == "length" else ("empty output" if not (raw and raw.strip()) else "invalid JSON")
             raw = self.chat(
                 sys_json,
                 user + "\n\nYour previous reply was not valid JSON. JSON only, no reasoning.",
                 model=model,
                 temperature=0.0,
                 max_tokens=retry_max_tokens,
-                tag=tag + ":retry",
+                tag=retry_tag,
+                retry_reason=retry_reason,
             )
+            if getattr(self, "last_finish_reason", None) == "length":
+                raise ValueError("retry model response truncated by token limit (finish_reason='length')")
             return extract_json(raw)

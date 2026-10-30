@@ -1,0 +1,29 @@
+"use client";
+import { jsx as _jsx } from "react/jsx-runtime";
+import { useEffect, useRef } from "react";
+import { mountOrb } from "./orb-core.js";
+/**
+ * An animated status indicator for what an AI agent is doing: a `state`, and optionally one of that
+ * state's `variant`s. It draws in the text color, so `text-*` classes tint it, and every orb is
+ * tuned to read at 20px. `shape`, `render`, `density`, `dotSize` and `tilt` change how it's drawn.
+ * `paused` holds it on its frame. With reduced motion it holds still.
+ */
+export function Orb({ state, variant, size = 20, speed = 1, paused = false, label, shape, render, density, dotSize, tilt, direction, className, }) {
+    const ref = useRef(null);
+    const orb = useRef(null);
+    useEffect(() => {
+        // Destructuring split state from variant, so TypeScript no longer sees they belong together.
+        const o = (orb.current = mountOrb(ref.current, { state, variant, size, speed, label, shape, render, density, dotSize, tilt, direction }));
+        return o.destroy;
+    }, [state, variant, size, speed, label, shape, render, density, dotSize, tilt, direction]);
+    // After the mount above, so a remounted orb comes back paused if it should be.
+    useEffect(() => {
+        if (paused)
+            orb.current.pause();
+        else
+            orb.current.play();
+    }, [paused, state, variant, size, speed, label, shape, render, density, dotSize, tilt, direction]);
+    // The same a11y attributes mountOrb sets, so the server's HTML has them before it runs.
+    const a11y = label ? { role: "img", "aria-label": label } : { "aria-hidden": true };
+    return _jsx("svg", { ref: ref, width: size, height: size, viewBox: `0 0 ${size} ${size}`, fill: "currentColor", className: className, ...a11y });
+}

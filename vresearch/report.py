@@ -57,12 +57,20 @@ class SourceRegistry:
 
 
 def ground_text(text: str, claims_by_id: dict[str, dict], registry: SourceRegistry) -> tuple[str, list[str]]:
-    """Keep only sentences that cite real claims; rewrite [C3] into source numbers [1][2]."""
+    """Keep only sentences that cite verified claims; rewrite [C3] into source numbers [1][2]."""
     kept, dropped = [], []
     for sent in split_sentences(text or ""):
+        # Guard: delete any sentence mentioning being unverified or flagged as unverified
+        if re.search(r"\bunverified\b", sent, re.I):
+            dropped.append(sent)
+            continue
         cids = [c.strip() for m in CITE_RE.findall(sent) for c in re.split(r"[,;]", m)]
         valid = [c for c in cids if c in claims_by_id]
         if not valid:
+            dropped.append(sent)
+            continue
+        # Guard: delete any sentence citing a claim whose status is not "verified"
+        if any(claims_by_id[c].get("status") != "verified" for c in valid):
             dropped.append(sent)
             continue
         body = re.sub(r"\s+([.!?,;])", r"\1", CITE_RE.sub("", sent)).strip()
@@ -75,6 +83,5 @@ def ground_text(text: str, claims_by_id: dict[str, dict], registry: SourceRegist
         body = body[: len(body) - len(punct)] if end else body
         nums = sorted({n for c in valid for n in registry.numbers_for_claim(claims_by_id[c])})
         marker = "".join(f"[{n}]" for n in nums)
-        flag = " (unverified)" if all(claims_by_id[c]["status"] != "verified" for c in valid) else ""
-        kept.append(f"{body} {marker}{flag}{punct}")
+        kept.append(f"{body} {marker}{punct}")
     return " ".join(kept), dropped

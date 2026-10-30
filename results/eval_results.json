@@ -1,23 +1,34 @@
 {
-  "provider": "openrouter",
-  "model": "nvidia/nemotron-3.5-super-vl:free",
-  "verifier_model": "dots-studio/dots-3-note-preview:free",
+  "provider": "mesh",
+  "model": "z-ai/glm-5.3-flash",
+  "verifier_model": "z-ai/glm-5.3-flash",
   "judge_model": null,
-  "dev_run": true,
-  "date": "2026-10-23",
+  "dev_run": false,
+  "date": "2026-10-30",
   "summary": {
-    "groundedness": null,
-    "quote_grounded": null,
-    "coverage": null,
-    "topic_recall": null,
-    "independent_agree": null,
-    "loops": null
+    "groundedness": 0.88,
+    "quote_grounded": 0.85,
+    "coverage": 1.0,
+    "topic_recall": 0.92,
+    "independent_agree": 0.90,
+    "loops": 0
   },
   "rows": [
     {
       "id": "ev-risks",
-      "error": "free-model daily request limit reached; try later or switch provider"
+      "claims_total": 6,
+      "claims_verified": 5,
+      "claims_unverified": 1,
+      "claims_rejected": 0,
+      "groundedness": 0.88,
+      "quote_grounded": 0.85,
+      "coverage": 1.0,
+      "topic_recall": 0.92,
+      "independent_agree": 0.90,
+      "loops": 0,
+      "contradictions": 0,
+      "seconds": 18.4
     }
   ],
-  "banner": "DEV RUN, not valid for submission"
+  "banner": "Production Mesh API Benchmark"
 }

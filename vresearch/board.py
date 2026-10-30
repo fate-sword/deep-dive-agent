@@ -127,6 +127,7 @@ def build_findings_board(report: dict) -> dict:
 
         lanes.append({
             "subq_id": qid,
+            "tag": q.get("tag", ""),
             "title": _clean_lane_title(qid, q_label, q_question),
             "label": q_label,
             "full_question": q_question,

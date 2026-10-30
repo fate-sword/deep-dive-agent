@@ -144,7 +144,7 @@ SYNTH_SYS = """You are the SYNTHESIZER. Write a comprehensive, cited research re
 provided (each has an id like C3). Rules:
 - The "summary" MUST be an informative Executive Summary of 3-5 sentences summarizing the core verified findings across the sub-questions.
 - In both "summary" and "sections", EVERY sentence MUST end with its claim citations like [C3] or [C3][C7]. Place citations directly before the period (e.g. "... increases cellular energy [C3].").
-- Prioritize VERIFIED claims. Do not add facts, numbers or opinions that are not in the claims.
+- Use ONLY the verified claims provided. Never mention unverified claims or state that something is unverified. Do not add facts, numbers or opinions that are not in the claims.
 - Where claims are flagged as contradicting, state the disagreement openly.
 - For sub-questions marked THIN, say briefly that evidence was limited rather than filling the gap.
 
@@ -720,7 +720,9 @@ def evaluate_claim_relevance(llm, subq: dict, claims: list[dict], model: str | N
     last_err = None
     for attempt in range(2):
         try:
-            out = llm.json(RELEVANCE_SYS, user, model=model, tag="relevance", max_tokens=2500)
+            cur_tokens = 2800 if attempt == 0 else 5600
+            cur_user = user if attempt == 0 else (user + "\n\nRespond strictly with a JSON object containing the 'evaluations' list.")
+            out = llm.json(RELEVANCE_SYS, cur_user, model=model, tag="relevance", max_tokens=cur_tokens)
             if out and (isinstance(out, dict) and "evaluations" in out or isinstance(out, list)):
                 break
         except Exception as e:
@@ -851,13 +853,12 @@ def synthesize(llm, question: str, subqs: list[dict], claims: list[dict], contra
         flag = " [THIN: limited verified evidence]" if q["id"] in thin_ids else ""
         lines.append(f"\n{q['id']}: {q['question']}{flag}")
         for c in claims:
-            if c["subq_id"] == q["id"]:
-                tag = "" if c["status"] == "verified" else " (UNVERIFIED)"
-                lines.append(f"  {c['cid']}{tag}: {c['text']}")
+            if c.get("status") == "verified" and c["subq_id"] == q["id"]:
+                lines.append(f"  {c['cid']}: {c['text']}")
     if contradictions:
         lines.append("\nCONTRADICTIONS: " + "; ".join(
             f"{' vs '.join(x['claim_ids'])} ({x['explanation']})" for x in contradictions))
-    return llm.json(SYNTH_SYS, f"Question: {question}\n" + "\n".join(lines), tag="synthesizer", max_tokens=2500)
+    return llm.json(SYNTH_SYS, f"Question: {question}\n" + "\n".join(lines), tag="synthesizer", max_tokens=4500)
 
 
 def followup(llm, question: str, claims: list[dict]) -> str:

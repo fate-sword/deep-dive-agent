@@ -1,20 +1,19 @@
+"""Pipeline configuration and runtime settings."""
 import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
-ROLES = ("planner", "drafter", "verifier", "synthesizer")
+ROLES = ("planner", "researcher", "drafter", "verifier", "synthesizer")
 
 TAG_TO_ROLE: dict[str, str] = {
     "planner": "planner",
-    "researcher_refine": "planner",
+    "researcher": "researcher",
     "drafter": "drafter",
     "verifier": "verifier",
-    "relevance": "verifier",
     "contradictor": "verifier",
     "synthesizer": "synthesizer",
     "followup": "synthesizer",
@@ -22,9 +21,8 @@ TAG_TO_ROLE: dict[str, str] = {
 
 
 def map_tag_to_role(tag: str) -> str:
-    """Map agent tag to standard role."""
-    t = (tag or "").lower().strip()
-    return TAG_TO_ROLE.get(t, "planner")
+    cleaned = tag.split(":")[0].lower().strip()
+    return TAG_TO_ROLE.get(cleaned, "planner")
 
 
 @dataclass
@@ -42,22 +40,16 @@ class Settings:
     tavily_monthly_cap: int = 0
     research_workers: int = 3
     llm_concurrency: int = 4
-    llm_provider: str = "mesh"  # "mesh" | "openrouter"
+    llm_provider: str = "mesh"
     relevance_model: str = ""
     show_filtered_in_trail: bool = True
+    depth: str = "std"  # "quick" | "std" | "deep"
     llm_extra_body: dict[str, Any] = field(default_factory=dict)
-    openrouter_fallback_models: list[str] = field(default_factory=list)
     role_models: dict[str, str] = field(default_factory=dict)
 
     def get_model_for_role(self, role: str) -> str:
         role = role.lower().strip()
-        m = self.role_models.get(role) or self.model
-        if not m and self.llm_provider == "openrouter":
-            raise ValueError(
-                f"No model configured for OpenRouter role '{role}'. "
-                f"Set OPENROUTER_MODEL or OPENROUTER_MODEL_{role.upper()} in environment."
-            )
-        return m
+        return self.role_models.get(role) or self.model
 
     def get_model_for_tag(self, tag: str) -> str:
         return self.get_model_for_role(map_tag_to_role(tag))
@@ -65,9 +57,9 @@ class Settings:
 
 def get_settings() -> Settings:
     provider = os.getenv("LLM_PROVIDER", "mesh").lower().strip()
-    if provider not in ("mesh", "openrouter"):
+    if provider != "mesh":
         raise ValueError(
-            f"Unknown LLM provider '{provider}'. Deeptrace registry strictly supports 'mesh' and 'openrouter'."
+            f"Unknown LLM provider '{provider}'. Deeptrace registry strictly supports 'mesh'."
         )
 
     # Validate LLM_EXTRA_BODY_JSON if provided
@@ -82,37 +74,25 @@ def get_settings() -> Settings:
         except Exception as e:
             raise ValueError(f"Invalid LLM_EXTRA_BODY_JSON: {e}")
 
-    # Fallback models for OpenRouter
-    fallback_raw = os.getenv("OPENROUTER_FALLBACK_MODELS", "").strip()
-    openrouter_fallback_models = [m.strip() for m in fallback_raw.split(",") if m.strip()] if fallback_raw else []
-
     # Concurrency limit
-    default_concurrency = 2 if provider == "openrouter" else 4
     concurrency_env = os.getenv("LLM_CONCURRENCY")
-    llm_concurrency = int(concurrency_env) if concurrency_env else default_concurrency
+    llm_concurrency = int(concurrency_env) if concurrency_env else 4
 
     # Model resolution
-    p_upper = provider.upper()
-    default_model = os.getenv(f"{p_upper}_MODEL", "")
-    if provider == "mesh" and not default_model:
-        default_model = os.getenv("MESH_MODEL", "openai/gpt-4o-mini")
+    default_model = os.getenv("MESH_MODEL", "z-ai/glm-5.3-flash")
 
     role_models: dict[str, str] = {}
     for role in ROLES:
-        role_override = os.getenv(f"{p_upper}_MODEL_{role.upper()}", "")
-        if not role_override and provider == "mesh" and role == "verifier":
+        role_override = os.getenv(f"MESH_MODEL_{role.upper()}", "")
+        if not role_override and role == "verifier":
             role_override = os.getenv("MESH_VERIFIER_MODEL", "")
         role_models[role] = role_override or default_model
 
     # Base URL & API key
-    if provider == "openrouter":
-        base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        api_key = os.getenv("OPENROUTER_API_KEY", "")
-    else:
-        base_url = os.getenv("MESH_BASE_URL", "https://api.meshapi.ai/v1")
-        api_key = os.getenv("MESH_API_KEY", "")
+    base_url = os.getenv("MESH_BASE_URL", "https://api.meshapi.ai/v1")
+    api_key = os.getenv("MESH_API_KEY", "")
 
-    relevance_model = os.getenv("MESH_RELEVANCE_MODEL") or os.getenv(f"{p_upper}_MODEL_RELEVANCE") or role_models.get("verifier", default_model)
+    relevance_model = os.getenv("MESH_RELEVANCE_MODEL") or os.getenv("MESH_MODEL_RELEVANCE") or role_models.get("verifier", default_model)
     show_filtered = os.getenv("SHOW_FILTERED_IN_TRAIL", "1").lower() in ("1", "true", "yes")
 
     return Settings(
@@ -133,6 +113,5 @@ def get_settings() -> Settings:
         llm_concurrency=llm_concurrency,
         llm_provider=provider,
         llm_extra_body=extra_body,
-        openrouter_fallback_models=openrouter_fallback_models,
         role_models=role_models,
     )

@@ -1,5 +1,5 @@
 """LLM Provider abstraction and registry for Deeptrace.
-Registry contains exactly two providers: 'mesh' (production default) and 'openrouter' (dev-only).
+Mesh API is the production provider.
 """
 import os
 from dataclasses import dataclass, field
@@ -14,7 +14,7 @@ class Provider:
     dev_only: bool = False
 
 
-ALLOWED_PROVIDERS = ("mesh", "openrouter")
+ALLOWED_PROVIDERS = ("mesh",)
 
 
 def get_provider(name: str | None = None) -> Provider:
@@ -22,36 +22,7 @@ def get_provider(name: str | None = None) -> Provider:
     prov = (name or os.getenv("LLM_PROVIDER", "mesh")).lower().strip()
     if prov not in ALLOWED_PROVIDERS:
         raise ValueError(
-            f"Unknown LLM provider '{prov}'. Deeptrace registry strictly supports 'mesh' and 'openrouter'."
-        )
-
-    deploy_env = os.getenv("DEPLOY_ENV", "").lower().strip()
-    if deploy_env == "production" and prov != "mesh":
-        raise RuntimeError(
-            f"Deploy environment is production (DEPLOY_ENV=production). Refusing non-mesh provider '{prov}'. "
-            "All production calls must route through Mesh API."
-        )
-
-    if prov == "openrouter":
-        allow_dev = os.getenv("ALLOW_DEV_PROVIDER", "").lower().strip()
-        if allow_dev not in ("1", "true", "yes"):
-            raise RuntimeError(
-                "Provider 'openrouter' is dev-only and requires ALLOW_DEV_PROVIDER=1 in environment."
-            )
-        headers: dict[str, str] = {}
-        referer = os.getenv("OPENROUTER_REFERER", "").strip()
-        if referer:
-            headers["HTTP-Referer"] = referer
-        title = os.getenv("OPENROUTER_TITLE", "Deeptrace").strip()
-        if title:
-            headers["X-Title"] = title
-
-        return Provider(
-            name="openrouter",
-            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            default_headers=headers,
-            dev_only=True,
+            f"Unknown LLM provider '{prov}'. Deeptrace registry strictly supports 'mesh'."
         )
 
     # Mesh provider (default)

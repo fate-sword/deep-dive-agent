@@ -6,9 +6,14 @@
       "kind": "subquestions",
       "payload": {
         "sub_questions": [
-          { "id": "Q1", "label": "Global battery demand and market growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "queries": ["battery demand growth forecast 2026"], "tried": [] },
-          { "id": "Q2", "label": "Battery compliance rules and penalties", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "queries": ["battery regulation compliance penalties"], "tried": [] }
-        ]
+          { "id": "Q1", "tag": "Demand Projections", "label": "Global battery demand and market growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "maps_to_clause": "EV battery market risks in 2026", "queries": ["battery demand growth forecast 2026"], "tried": [] },
+          { "id": "Q2", "tag": "Regulatory Liability", "label": "Battery compliance rules and penalties", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "maps_to_clause": "EV battery market risks in 2026", "queries": ["battery regulation compliance penalties"], "tried": [] }
+        ],
+        "audit": {
+          "mapped_clauses": ["EV battery market risks in 2026"],
+          "dropped_peripheral_angles": ["battery mineral mining stock analysis", "electric vehicle motor aerodynamics"],
+          "reasoning": "Decomposition focused directly on demand trajectories and regulatory compliance penalties."
+        }
       }
     },
     {
@@ -75,11 +80,18 @@
       }
     },
     {
-      "delay": 0.4,
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C1", "subq": "Q1" }
+    },
+    {
+      "delay": 0.35,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C1",
+        "subq": "Q1",
         "status": "verified",
         "verdict": "supported",
         "reason": "stated in market survey",
@@ -94,11 +106,18 @@
       "payload": { "tag": "verifier", "model": "openai/gpt-4o-mini", "ms": 320, "tokens": 480 }
     },
     {
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C2", "subq": "Q1" }
+    },
+    {
       "delay": 0.3,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C2",
+        "subq": "Q1",
         "status": "verified",
         "verdict": "supported",
         "reason": "stated in cell cost analysis",
@@ -107,11 +126,18 @@
       }
     },
     {
-      "delay": 0.4,
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C3", "subq": "Q1" }
+    },
+    {
+      "delay": 0.35,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C3",
+        "subq": "Q1",
         "status": "rejected",
         "verdict": "unsupported",
         "reason": "source does not say demand will triple in two months",
@@ -120,11 +146,18 @@
       }
     },
     {
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C4", "subq": "Q2" }
+    },
+    {
       "delay": 0.3,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C4",
+        "subq": "Q2",
         "status": "unverified",
         "verdict": "partial",
         "reason": "specific cost increase figure not found in cited passage",
@@ -133,11 +166,18 @@
       }
     },
     {
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C5", "subq": "Q2" }
+    },
+    {
       "delay": 0.3,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C5",
+        "subq": "Q2",
         "status": "verified",
         "verdict": "supported",
         "reason": "stated in regulatory statute",
@@ -170,11 +210,18 @@
       }
     },
     {
-      "delay": 0.4,
+      "delay": 0.25,
+      "step": "verify",
+      "kind": "checking",
+      "payload": { "cid": "C6", "subq": "Q2" }
+    },
+    {
+      "delay": 0.35,
       "step": "verify",
       "kind": "verdict",
       "payload": {
         "cid": "C6",
+        "subq": "Q2",
         "status": "verified",
         "verdict": "supported",
         "reason": "stated verbatim in article 14 directive",
@@ -225,9 +272,14 @@
       { "n": 2, "title": "Lithium Cell Pricing Index & Industry Margins", "url": "https://sample-news.com", "quality": 0.75, "tier": "general", "kind": "web" },
       { "n": 3, "title": "Clean Energy Regulatory Directive on Battery Recycling", "url": "https://sample-agency.gov", "quality": 1.0, "tier": "primary", "kind": "web" }
     ],
+    "plan_audit": {
+      "mapped_clauses": ["EV battery market risks in 2026"],
+      "dropped_peripheral_angles": ["battery mineral mining stock analysis", "electric vehicle motor aerodynamics"],
+      "reasoning": "Decomposition focused directly on demand trajectories and regulatory compliance penalties."
+    },
     "sub_questions": [
-      { "id": "Q1", "label": "Global battery demand and market growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "queries_tried": ["battery demand growth forecast 2026"] },
-      { "id": "Q2", "label": "Battery compliance rules and penalties", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "queries_tried": ["battery regulation compliance penalties", "battery producer extended responsibility recycling audit"] }
+      { "id": "Q1", "tag": "Demand Projections", "label": "Global battery demand and market growth", "question": "How fast is EV battery demand growing?", "answer_spec": "Quantifies EV battery demand trajectory and pack cost declines.", "maps_to_clause": "EV battery market risks in 2026", "queries_tried": ["battery demand growth forecast 2026"] },
+      { "id": "Q2", "tag": "Regulatory Liability", "label": "Battery compliance rules and penalties", "question": "What regulatory risks and compliance costs exist?", "answer_spec": "Identifies compliance penalties, recycling mandates, and legal restrictions.", "maps_to_clause": "EV battery market risks in 2026", "queries_tried": ["battery regulation compliance penalties", "battery producer extended responsibility recycling audit"] }
     ],
     "accepted": [
       { "cid": "C1", "subq_id": "Q1", "text": "Analysts expect EV battery demand to keep growing steadily through 2030.", "status": "verified", "verdict": "supported", "reason": "stated in market survey", "quote": "demand to keep growing steadily through 2030", "evidence_ids": ["E1"], "source_numbers": [1] },
