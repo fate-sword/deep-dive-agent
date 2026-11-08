@@ -118,6 +118,15 @@ def index():
     return FileResponse(os.path.join(WEB, "index.html"))
 
 
+
+@app.get("/health")
+@app.get("/healthz")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "app": "Deeptrace"}
+
+
+
 @app.get("/api/status")
 def status():
     mesh_key = bool(os.getenv("MESH_API_KEY"))
@@ -402,6 +411,6 @@ def report(run_id: str, fmt: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "7860"))
+    port = int(os.environ.get("PORT", os.environ.get("WEB_PORT", 10000)))
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
 

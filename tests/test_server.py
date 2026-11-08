@@ -13,6 +13,12 @@ def test_status_endpoint():
     assert data["name"] == "Deeptrace"
     assert "live" in data
 
+    # Health check endpoints for cloud load balancers (Render, etc.)
+    for path in ("/health", "/healthz", "/api/health"):
+        rh = client.get(path)
+        assert rh.status_code == 200
+        assert rh.json()["status"] == "ok"
+
 
 def test_create_run_and_stream_sample():
     client = TestClient(app)
