@@ -1,0 +1,18 @@
+# Netlify Configuration for Deeptrace Frontend
+#
+# NOTE: Deeptrace's backend (FastAPI, SQLite, LangGraph, and SSE streams)
+# runs 30-90s continuous research tasks, which exceed Netlify serverless function timeouts (10s max).
+#
+# Best architecture with Netlify:
+# 1. Deploy the backend (server.py) to Render (free) or Hugging Face Spaces (free Docker).
+# 2. Update the redirect URL below to point /api/* to your hosted backend.
+# 3. Visitors access the site via Netlify, and all searches run through your hosted backend using your API keys!
+
+[build]
+  publish = "web"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-BACKEND.onrender.com/api/:splat"
+  status = 200
+  force = true

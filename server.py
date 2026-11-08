@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from vresearch import answer_followup, run_research
@@ -23,6 +24,13 @@ from vresearch.store import RunStore
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
 app = FastAPI(title="Deeptrace", description="AI Research Agent")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 settings = get_settings()
 
 # Validate provider guardrails at startup
